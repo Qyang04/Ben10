@@ -1,0 +1,258 @@
+/**
+ * TransformableElement Component
+ * ===============================
+ * 
+ * WHAT THIS FILE DOES:
+ * - Wraps an element to make it draggable in 3D space
+ * - Uses raycaster + ground plane intersection (inspired by wedding repo)
+ * - No gizmo arrows — directly click and drag on the ground plane
+ * - Grid snaps in real-time while dragging
+ * 
+ * HOW IT WORKS:
+ * 1. Click element to select (shows selection ring)
+ * 2. Pointer down → captures pointer, creates ground plane, calculates offset
+ * 3. Pointer move → intersects ray with ground plane, applies offset, snaps to grid
+ * 4. Pointer up → releases capture, commits position to store, re-enables orbit
+ */
+
+import { useRef, useState, useCallback } from 'react';
+import { useThree } from '@react-three/fiber';
+import * as THREE from 'three';
+import { useFloorPlanStore } from '../../store';
+import { snapToGrid } from '../../utils/gridSnap';
+
+interface TransformableElementProps {
+    elementId: string;
+    children: React.ReactNode;
+    position: [number, number, number];
+    rotation: [number, number, number];
+    isSelected: boolean;
+    onSelect: () => void;
+    onOrbitToggle?: (enabled: boolean) => void;
+}
+
+/** Internal drag state — kept as a ref to avoid re-renders during drag */
+interface DragState {
+    isDragging: boolean;
+    plane: THREE.Plane;
+    offset: THREE.Vector3;
+    intersection: THREE.Vector3;
+    pointerId: number | null;
+    captureTarget: EventTarget | null;
+}
+
+const SNAP_INCREMENT = 0.5; // 0.5m grid
+const SELECTION_RING_COLOR = '#3b82f6'; // Blue ring
+const HOVER_EMISSIVE = 0x1a3a5c; // Subtle blue glow
+
+export function TransformableElement({
+    elementId,
+    children,
+    position,
+    rotation,
+    isSelected,
+    onSelect,
+    onOrbitToggle,
+}: TransformableElementProps) {
+    const groupRef = useRef<THREE.Group>(null);
+    const updateElement = useFloorPlanStore((state) => state.updateElement);
+    const [isHovered, setIsHovered] = useState(false);
+
+    // Drag state ref — mutable, no re-renders
+    const dragState = useRef<DragState>({
+        isDragging: false,
+        plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), // Y-up ground plane
+        offset: new THREE.Vector3(),
+        intersection: new THREE.Vector3(),
+        pointerId: null,
+        captureTarget: null,
+    });
+
+    // Access the R3F scene internals
+    const { gl } = useThree();
+
+    /**
+     * Commit current visual position to the Zustand store
+     */
+    const commitPosition = useCallback(() => {
+        if (!groupRef.current) return;
+        const { x, y, z } = groupRef.current.position;
+        updateElement(elementId, {
+            position: {
+                x: Number(x.toFixed(3)),
+                y: Number(y.toFixed(3)),
+                z: Number(z.toFixed(3)),
+            },
+        });
+    }, [elementId, updateElement]);
+
+    /**
+     * POINTER DOWN — start drag
+     * 1. If not selected, just select (don't start drag)
+     * 2. If selected, begin drag: capture pointer, compute offset from ground
+     */
+    const handlePointerDown = useCallback(
+        (event: THREE.Event & { stopPropagation: () => void; ray: THREE.Ray; pointerId: number; target: EventTarget }) => {
+            event.stopPropagation();
+
+            // First click selects, second click (while selected) starts drag
+            if (!isSelected) {
+                onSelect();
+                return;
+            }
+
+            if (!groupRef.current) return;
+
+            const state = dragState.current;
+
+            // Calculate where the ray hits the ground plane
+            if (event.ray.intersectPlane(state.plane, state.intersection)) {
+                // Offset = current position minus hit point (so object doesn't jump)
+                state.offset.copy(groupRef.current.position).sub(state.intersection);
+            } else {
+                state.offset.set(0, 0, 0);
+            }
+
+            state.isDragging = true;
+            state.pointerId = event.pointerId;
+            state.captureTarget = event.target;
+
+            // Capture pointer for reliable tracking outside the mesh
+            try {
+                (event.target as Element)?.setPointerCapture?.(event.pointerId);
+            } catch {
+                // Pointer capture not supported in all environments
+            }
+
+            // Disable orbit controls while dragging
+            onOrbitToggle?.(false);
+
+            // Set grabbing cursor
+            gl.domElement.style.cursor = 'grabbing';
+        },
+        [isSelected, onSelect, onOrbitToggle, gl]
+    );
+
+    /**
+     * POINTER MOVE — update position during drag
+     * Intersect ray with ground plane, apply offset, snap to grid
+     */
+    const handlePointerMove = useCallback(
+        (event: THREE.Event & { stopPropagation: () => void; ray: THREE.Ray }) => {
+            const state = dragState.current;
+            if (!state.isDragging || !groupRef.current) return;
+
+            event.stopPropagation();
+
+            if (event.ray.intersectPlane(state.plane, state.intersection)) {
+                // New position = intersection + offset, snapped to grid
+                const nextX = snapToGrid(state.intersection.x + state.offset.x, SNAP_INCREMENT);
+                const nextZ = snapToGrid(state.intersection.z + state.offset.z, SNAP_INCREMENT);
+
+                // Keep Y at current level (ground)
+                const nextY = groupRef.current.position.y;
+
+                groupRef.current.position.set(nextX, nextY, nextZ);
+            }
+        },
+        []
+    );
+
+    /**
+     * POINTER UP — end drag
+     * Release pointer capture, commit position, re-enable orbit
+     */
+    const handlePointerUp = useCallback(
+        (event: THREE.Event & { stopPropagation: () => void }) => {
+            event.stopPropagation();
+
+            const state = dragState.current;
+            if (!state.isDragging) return;
+
+            // Release pointer capture
+            try {
+                if (state.captureTarget && state.pointerId !== null) {
+                    (state.captureTarget as Element)?.releasePointerCapture?.(state.pointerId);
+                }
+            } catch {
+                // Ignore
+            }
+
+            state.isDragging = false;
+            state.pointerId = null;
+            state.captureTarget = null;
+
+            // Commit final position to store
+            commitPosition();
+
+            // Re-enable orbit controls
+            onOrbitToggle?.(true);
+
+            // Reset cursor
+            gl.domElement.style.cursor = isHovered ? 'grab' : 'auto';
+        },
+        [commitPosition, onOrbitToggle, gl, isHovered]
+    );
+
+    /**
+     * Hover handlers — visual feedback + cursor
+     */
+    const handlePointerEnter = useCallback(() => {
+        setIsHovered(true);
+        if (!dragState.current.isDragging) {
+            gl.domElement.style.cursor = 'grab';
+        }
+    }, [gl]);
+
+    const handlePointerLeave = useCallback(() => {
+        setIsHovered(false);
+        if (!dragState.current.isDragging) {
+            gl.domElement.style.cursor = 'auto';
+        }
+    }, [gl]);
+
+    return (
+        <group
+            ref={groupRef}
+            position={position}
+            rotation={rotation}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={handlePointerDown as any}
+            onPointerMove={handlePointerMove as any}
+            onPointerUp={handlePointerUp as any}
+            onPointerEnter={handlePointerEnter}
+            onPointerLeave={handlePointerLeave}
+        >
+            {/* The actual 3D element */}
+            {children}
+
+            {/* Selection ring — shown when selected */}
+            {isSelected && (
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+                    <ringGeometry args={[0.6, 0.72, 32]} />
+                    <meshBasicMaterial
+                        color={SELECTION_RING_COLOR}
+                        transparent
+                        opacity={0.7}
+                        side={THREE.DoubleSide}
+                        depthWrite={false}
+                    />
+                </mesh>
+            )}
+
+            {/* Hover highlight — subtle emissive glow */}
+            {isHovered && !isSelected && (
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+                    <ringGeometry args={[0.55, 0.65, 32]} />
+                    <meshBasicMaterial
+                        color={HOVER_EMISSIVE}
+                        transparent
+                        opacity={0.4}
+                        side={THREE.DoubleSide}
+                        depthWrite={false}
+                    />
+                </mesh>
+            )}
+        </group>
+    );
+}

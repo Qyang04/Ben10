@@ -14,9 +14,11 @@
  * 3. PropertiesPanel shows/edits selected element
  */
 
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Canvas3D } from '../components/editor';
 import { useFloorPlanStore } from '../store';
+import { saveFloorPlan, loadFloorPlan } from '../services/floorPlanService';
 import type { Element, ElementType } from '../types';
 
 /**
@@ -218,6 +220,61 @@ function PropertiesPanel() {
  */
 export default function Editor() {
     const floorPlan = useFloorPlanStore((state) => state.floorPlan);
+    const setFloorPlan = useFloorPlanStore((state) => state.setFloorPlan);
+    const [isSaving, setIsSaving] = useState(false);
+    const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+
+    /**
+     * Handle save to Firestore
+     * WHAT: Saves current floor plan to Firebase
+     * WHY: Persist user's work across sessions
+     */
+    const handleSave = async () => {
+        if (!floorPlan) return;
+
+        setIsSaving(true);
+        setSaveStatus('idle');
+
+        try {
+            // For now, use a demo user ID (would come from auth in production)
+            const floorPlanToSave = {
+                ...floorPlan,
+                userId: 'demo-user',
+            };
+            await saveFloorPlan(floorPlanToSave);
+            setSaveStatus('saved');
+
+            // Reset status after 2 seconds
+            setTimeout(() => setSaveStatus('idle'), 2000);
+        } catch (error) {
+            console.error('Save failed:', error);
+            setSaveStatus('error');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    /**
+     * Handle load from Firestore
+     * WHAT: Loads floor plan by ID from Firebase
+     * WHY: Restore previously saved work
+     */
+    const handleLoad = async () => {
+        if (!floorPlan?.id) return;
+
+        try {
+            const loaded = await loadFloorPlan(floorPlan.id);
+            if (loaded) {
+                setFloorPlan(loaded);
+                alert('Floor plan loaded successfully!');
+            } else {
+                alert('No saved floor plan found with this ID');
+            }
+        } catch (error) {
+            console.error('Load failed:', error);
+            alert('Failed to load floor plan');
+        }
+    };
 
     return (
         <div className="min-h-screen bg-slate-900 text-white flex flex-col">
@@ -232,10 +289,30 @@ export default function Editor() {
                     <span className="text-xs text-slate-500">
                         ({floorPlan?.elements.length || 0} elements)
                     </span>
+                    {/* Save status indicator */}
+                    {saveStatus === 'saved' && (
+                        <span className="text-xs text-green-400">✓ Saved</span>
+                    )}
+                    {saveStatus === 'error' && (
+                        <span className="text-xs text-red-400">✗ Save failed</span>
+                    )}
                 </div>
                 <div className="flex items-center gap-3">
-                    <button className="px-4 py-2 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors">
-                        Save
+                    <button
+                        onClick={handleLoad}
+                        className="px-4 py-2 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors"
+                    >
+                        Load
+                    </button>
+                    <button
+                        onClick={handleSave}
+                        disabled={isSaving}
+                        className={`px-4 py-2 rounded-lg transition-colors ${isSaving
+                            ? 'bg-slate-600 cursor-not-allowed'
+                            : 'bg-slate-700 hover:bg-slate-600'
+                            }`}
+                    >
+                        {isSaving ? 'Saving...' : 'Save'}
                     </button>
                     <Link
                         to="/analysis"
