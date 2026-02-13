@@ -19,6 +19,8 @@ import { Link } from 'react-router-dom';
 import { Canvas3D } from '../components/editor';
 import { useFloorPlanStore } from '../store';
 import { saveFloorPlan, loadFloorPlan } from '../services/floorPlanService';
+import { useUndoRedo } from '../hooks/useUndoRedo';
+import { WALL_TEXTURES } from '../components/elements/wallTextures';
 import type { Element, ElementType } from '../types';
 
 /**
@@ -204,6 +206,28 @@ function PropertiesPanel() {
                 ))}
             </div>
 
+            {/* Wall texture picker — only for walls */}
+            {selectedElement.type === 'wall' && (
+                <div className="mb-4">
+                    <span className="text-xs text-slate-500 block mb-2">Wall Texture</span>
+                    <select
+                        value={(selectedElement.properties.texture as string) || 'default'}
+                        onChange={(e) =>
+                            updateElement(selectedElement.id, {
+                                properties: { ...selectedElement.properties, texture: e.target.value },
+                            })
+                        }
+                        className="w-full bg-slate-700 border border-slate-600 rounded px-2 py-2 text-white text-sm"
+                    >
+                        {WALL_TEXTURES.map((tex) => (
+                            <option key={tex.id} value={tex.id}>
+                                {tex.name}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
+
             {/* Delete button */}
             <button
                 onClick={() => removeElement(selectedElement.id)}
@@ -221,6 +245,7 @@ function PropertiesPanel() {
 export default function Editor() {
     const floorPlan = useFloorPlanStore((state) => state.floorPlan);
     const setFloorPlan = useFloorPlanStore((state) => state.setFloorPlan);
+    const { canUndo, canRedo, undo, redo } = useUndoRedo();
     const [isSaving, setIsSaving] = useState(false);
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
 
@@ -298,6 +323,26 @@ export default function Editor() {
                     )}
                 </div>
                 <div className="flex items-center gap-3">
+                    {/* Undo/Redo buttons */}
+                    <button
+                        onClick={undo}
+                        disabled={!canUndo}
+                        className={`px-3 py-2 rounded-lg transition-colors ${canUndo ? 'bg-slate-700 hover:bg-slate-600' : 'bg-slate-800 text-slate-600 cursor-not-allowed'
+                            }`}
+                        title="Undo (Ctrl+Z)"
+                    >
+                        ↩
+                    </button>
+                    <button
+                        onClick={redo}
+                        disabled={!canRedo}
+                        className={`px-3 py-2 rounded-lg transition-colors ${canRedo ? 'bg-slate-700 hover:bg-slate-600' : 'bg-slate-800 text-slate-600 cursor-not-allowed'
+                            }`}
+                        title="Redo (Ctrl+Y)"
+                    >
+                        ↪
+                    </button>
+                    <span className="text-slate-600">|</span>
                     <button
                         onClick={handleLoad}
                         className="px-4 py-2 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors"

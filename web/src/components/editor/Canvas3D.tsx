@@ -7,14 +7,17 @@
  * - Provides camera controls for orbiting/zooming the scene
  * - Renders a floor grid for spatial reference
  * - Manages orbit toggle (disabled during element drag)
- * - Ground plane mesh for click-to-deselect
+ * - Improved lighting with shadows, fog, and ContactShadows
+ * - Auto-fit camera on element changes
  * 
  * HOW IT WORKS:
  * 1. Canvas wraps the entire 3D scene
  * 2. OrbitControls lets users rotate/zoom (disabled during drag)
  * 3. Grid helper shows the floor plane
  * 4. Invisible ground mesh catches clicks for deselection
- * 5. Elements from the store are rendered as 3D objects
+ * 5. ContactShadows adds realistic floor shadows
+ * 6. Fog adds depth perception
+ * 7. AutoFitCamera frames all elements automatically
  * 
  * USAGE:
  * <Canvas3D />
@@ -22,9 +25,10 @@
 
 import { useState, useCallback } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid, Environment } from '@react-three/drei';
+import { OrbitControls, Grid, Environment, ContactShadows } from '@react-three/drei';
 import { useFloorPlanStore } from '../../store';
 import { FloorElements } from './FloorElements';
+import { AutoFitCamera } from './AutoFitCamera';
 
 /**
  * Scene component containing all 3D objects and helpers
@@ -52,9 +56,27 @@ function Scene() {
 
     return (
         <>
-            {/* Lighting */}
-            <ambientLight intensity={0.5} />
-            <directionalLight position={[10, 10, 5]} intensity={1} castShadow />
+            {/* Atmospheric fog for depth perception */}
+            <fog attach="fog" args={['#0f172a', 30, 80]} />
+
+            {/* Lighting — upgraded with proper shadow maps */}
+            <ambientLight intensity={0.4} />
+            <directionalLight
+                position={[10, 15, 8]}
+                intensity={1.2}
+                castShadow
+                shadow-mapSize-width={2048}
+                shadow-mapSize-height={2048}
+                shadow-camera-left={-20}
+                shadow-camera-right={20}
+                shadow-camera-top={20}
+                shadow-camera-bottom={-20}
+                shadow-camera-near={0.5}
+                shadow-camera-far={50}
+                shadow-bias={-0.0001}
+            />
+            {/* Fill light from opposite side */}
+            <directionalLight position={[-5, 8, -5]} intensity={0.3} />
 
             {/* Environment for realistic reflections */}
             <Environment preset="city" />
@@ -73,10 +95,21 @@ function Scene() {
                 infiniteGrid
             />
 
+            {/* ContactShadows for realistic floor shadows */}
+            <ContactShadows
+                position={[0, 0.001, 0]}
+                opacity={0.15}
+                width={40}
+                height={40}
+                blur={3}
+                far={15}
+            />
+
             {/* 
-             * Invisible ground plane — catches pointer events for:
+             * Ground plane — catches pointer events for:
              * 1. Click-to-deselect when clicking empty space
              * 2. Provides a raycastable surface for the drag system
+             * Subtle visible floor for realism
              */}
             <mesh
                 rotation={[-Math.PI / 2, 0, 0]}
@@ -86,11 +119,18 @@ function Scene() {
             >
                 <planeGeometry args={[100, 100]} />
                 <meshStandardMaterial
+                    color="#1e293b"
+                    roughness={0.92}
                     transparent
-                    opacity={0}
+                    opacity={0.6}
                     depthWrite={false}
+                    polygonOffset
+                    polygonOffsetFactor={1}
                 />
             </mesh>
+
+            {/* Auto-fit camera to frame elements */}
+            <AutoFitCamera />
 
             {/* Render all floor plan elements */}
             <FloorElements onOrbitToggle={handleOrbitToggle} />
