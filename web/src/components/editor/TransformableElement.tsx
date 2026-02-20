@@ -20,6 +20,7 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useFloorPlanStore } from '../../store';
 import { snapToGrid } from '../../utils/gridSnap';
+import { DimensionHandles } from './DimensionHandles';
 
 interface TransformableElementProps {
     elementId: string;
@@ -56,6 +57,9 @@ export function TransformableElement({
 }: TransformableElementProps) {
     const groupRef = useRef<THREE.Group>(null);
     const updateElement = useFloorPlanStore((state) => state.updateElement);
+    const element = useFloorPlanStore(
+        (state) => state.floorPlan?.elements.find((el) => el.id === elementId) ?? null
+    );
     const [isHovered, setIsHovered] = useState(false);
 
     // Drag state ref — mutable, no re-renders
@@ -238,6 +242,18 @@ export function TransformableElement({
                         depthWrite={false}
                     />
                 </mesh>
+            )}
+
+            {/* Dimension handles — shown when selected */}
+            {isSelected && element && (
+                <DimensionHandles
+                    dimensions={element.dimensions}
+                    onResize={(dim, value) => {
+                        updateElement(elementId, {
+                            dimensions: { ...element.dimensions, [dim]: value },
+                        });
+                    }}
+                />
             )}
 
             {/* Hover highlight — subtle emissive glow */}
