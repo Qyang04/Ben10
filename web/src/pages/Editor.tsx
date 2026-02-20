@@ -17,31 +17,25 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Canvas3D } from '../components/editor';
+import Canvas2D from '../components/editor/Canvas2D';
 import { useFloorPlanStore } from '../store';
+import { useViewModeStore } from '../store/viewModeStore';
 import { saveFloorPlan, loadFloorPlan } from '../services/floorPlanService';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import { WALL_TEXTURES } from '../components/elements/wallTextures';
-import type { Element, ElementType } from '../types';
+import type { Element } from '../types';
 
 /**
  * Element templates for the palette
  * Defines default dimensions for each element type
  */
-const ELEMENT_TEMPLATES: Record<ElementType, Omit<Element, 'id'>> = {
-    wall: {
-        type: 'wall',
-        position: { x: 0, y: 0, z: 0 },
-        rotation: { x: 0, y: 0, z: 0 },
-        dimensions: { width: 3, height: 2.5, depth: 0.15 },
-        properties: {},
-    },
-    door: {
-        type: 'door',
-        position: { x: 0, y: 0, z: 0 },
-        rotation: { x: 0, y: 0, z: 0 },
-        dimensions: { width: 0.9, height: 2.1, depth: 0.1 },
-        properties: {},
-    },
+/**
+ * Palette element types — furniture only.
+ * Walls/doors/windows are created via the 2D drawing tool.
+ */
+type PaletteElementType = 'ramp' | 'stairs' | 'table' | 'chair' | 'counter';
+
+const ELEMENT_TEMPLATES: Record<PaletteElementType, Omit<Element, 'id'>> = {
     ramp: {
         type: 'ramp',
         position: { x: 0, y: 0, z: 0 },
@@ -85,7 +79,7 @@ const ELEMENT_TEMPLATES: Record<ElementType, Omit<Element, 'id'>> = {
 function ElementPalette() {
     const addElement = useFloorPlanStore((state) => state.addElement);
 
-    const handleAddElement = (type: ElementType) => {
+    const handleAddElement = (type: PaletteElementType) => {
         const template = ELEMENT_TEMPLATES[type];
         const newElement: Element = {
             ...template,
@@ -105,7 +99,7 @@ function ElementPalette() {
                 Elements
             </h2>
             <div className="space-y-2 flex-1">
-                {(Object.keys(ELEMENT_TEMPLATES) as ElementType[]).map((type) => (
+                {(Object.keys(ELEMENT_TEMPLATES) as PaletteElementType[]).map((type) => (
                     <button
                         key={type}
                         onClick={() => handleAddElement(type)}
@@ -246,6 +240,8 @@ export default function Editor() {
     const floorPlan = useFloorPlanStore((state) => state.floorPlan);
     const setFloorPlan = useFloorPlanStore((state) => state.setFloorPlan);
     const { canUndo, canRedo, undo, redo } = useUndoRedo();
+    const viewMode = useViewModeStore((state) => state.mode);
+    const setViewMode = useViewModeStore((state) => state.setMode);
     const [isSaving, setIsSaving] = useState(false);
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
 
@@ -343,6 +339,21 @@ export default function Editor() {
                         ↪
                     </button>
                     <span className="text-slate-600">|</span>
+                    {/* View Mode Toggle */}
+                    {(['3d', '2d', 'split'] as const).map((m) => (
+                        <button
+                            key={m}
+                            onClick={() => setViewMode(m)}
+                            className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors ${viewMode === m
+                                ? 'bg-blue-500 text-white'
+                                : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                }`}
+                            title={`${m.toUpperCase()} view`}
+                        >
+                            {m === '3d' ? '🧊 3D' : m === '2d' ? '📐 2D' : '⬛ Split'}
+                        </button>
+                    ))}
+                    <span className="text-slate-600">|</span>
                     <button
                         onClick={handleLoad}
                         className="px-4 py-2 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors"
@@ -373,9 +384,49 @@ export default function Editor() {
                 {/* Left Sidebar - Element Palette */}
                 <ElementPalette />
 
-                {/* 3D Canvas Area */}
-                <main className="flex-1">
-                    <Canvas3D />
+                {/* Canvas Area — both views always mounted, visibility via CSS
+                     (matches wedding repo pattern: prevents WebGL context
+                      destruction and preserves camera state on view switch) */}
+                <main className="flex-1 relative">
+                    {/* 2D View — always mounted */}
+                    <div
+                        className="absolute inset-0 transition-all duration-500"
+                        style={{
+                            ...(viewMode === '2d'
+                                ? { zIndex: 10, opacity: 1 }
+                                : viewMode === 'split'
+                                    ? { width: '50%', zIndex: 10, opacity: 1, borderRight: '1px solid #334155' }
+                                    : { zIndex: 0, opacity: 0, pointerEvents: 'none' as const }
+                            )
+                        }}
+                    >
+                        <Canvas2D />
+                        {viewMode === '2d' && (
+                            <span className="absolute top-3 right-3 bg-blue-500 text-white text-xs font-semibold uppercase px-2 py-1 rounded shadow-md">
+                                2D Active
+                            </span>
+                        )}
+                    </div>
+
+                    {/* 3D View — always mounted */}
+                    <div
+                        className="absolute inset-0 transition-all duration-500"
+                        style={{
+                            ...(viewMode === '3d'
+                                ? { zIndex: 10, opacity: 1 }
+                                : viewMode === 'split'
+                                    ? { left: '50%', width: '50%', zIndex: 10, opacity: 1 }
+                                    : { zIndex: 0, opacity: 0, pointerEvents: 'none' as const }
+                            )
+                        }}
+                    >
+                        <Canvas3D />
+                        {viewMode === '3d' && (
+                            <span className="absolute top-3 right-3 bg-blue-500 text-white text-xs font-semibold uppercase px-2 py-1 rounded shadow-md">
+                                3D Active
+                            </span>
+                        )}
+                    </div>
                 </main>
 
                 {/* Right Sidebar - Properties */}

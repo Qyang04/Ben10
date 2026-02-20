@@ -23,18 +23,20 @@
  * <Canvas3D />
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Environment, ContactShadows } from '@react-three/drei';
 import { useFloorPlanStore } from '../../store';
 import { FloorElements } from './FloorElements';
 import { AutoFitCamera } from './AutoFitCamera';
+import { SceneExporter, ExportButtonUI } from './ExportButton';
+import BlueprintWalls3D from '../elements/BlueprintWalls3D';
 
 /**
  * Scene component containing all 3D objects and helpers
  * Separated from Canvas for cleaner code organization
  */
-function Scene() {
+function Scene({ onExportReady }: { onExportReady: (fn: (filename: string) => Promise<void>) => void }) {
     const floorPlan = useFloorPlanStore((state) => state.floorPlan);
     const selectElement = useFloorPlanStore((state) => state.selectElement);
     const [orbitEnabled, setOrbitEnabled] = useState(true);
@@ -132,7 +134,13 @@ function Scene() {
             {/* Auto-fit camera to frame elements */}
             <AutoFitCamera />
 
-            {/* Render all floor plan elements */}
+            {/* Scene exporter — invisible, just provides export function */}
+            <SceneExporter onReady={onExportReady} />
+
+            {/* Blueprint walls/doors/windows from 2D drawing */}
+            <BlueprintWalls3D />
+
+            {/* Palette-placed furniture elements */}
             <FloorElements onOrbitToggle={handleOrbitToggle} />
 
             {/* Camera controls — disabled during element drag */}
@@ -152,20 +160,47 @@ function Scene() {
 /**
  * Main Canvas3D component
  * Wraps the Three.js scene in a React Three Fiber Canvas
+ * Export button is rendered as a DOM overlay OUTSIDE the Canvas
  */
 export default function Canvas3D() {
+    const floorPlan = useFloorPlanStore((state) => state.floorPlan);
+    const [exporting, setExporting] = useState(false);
+    const exportFnRef = useRef<((filename: string) => Promise<void>) | null>(null);
+
+    const handleExportReady = useCallback((fn: (filename: string) => Promise<void>) => {
+        exportFnRef.current = fn;
+    }, []);
+
+    const handleExport = useCallback(async () => {
+        if (!exportFnRef.current) return;
+        setExporting(true);
+        try {
+            const filename = `${floorPlan?.name || 'floor-plan'}.glb`;
+            await exportFnRef.current(filename);
+        } catch (error) {
+            console.error('GLB export failed:', error);
+        } finally {
+            setExporting(false);
+        }
+    }, [floorPlan?.name]);
+
     return (
-        <Canvas
-            shadows
-            camera={{
-                position: [10, 10, 10], // Isometric-ish view
-                fov: 50,
-                near: 0.1,
-                far: 1000,
-            }}
-            style={{ background: '#0f172a' }} // Dark blue background
-        >
-            <Scene />
-        </Canvas>
+        <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+            <Canvas
+                shadows
+                camera={{
+                    position: [10, 10, 10], // Isometric-ish view
+                    fov: 50,
+                    near: 0.1,
+                    far: 1000,
+                }}
+                style={{ background: '#0f172a' }} // Dark blue background
+            >
+                <Scene onExportReady={handleExportReady} />
+            </Canvas>
+
+            {/* Export button — rendered as DOM overlay, NOT inside the 3D scene */}
+            <ExportButtonUI exporting={exporting} onExport={handleExport} />
+        </div>
     );
 }
