@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import type { FloorPlan, Element } from '../types';
+import type {
+    FloorPlan,
+    Element,
+    BlueprintPoint,
+    BlueprintWall,
+    BlueprintDoor,
+    BlueprintWindow,
+} from '../types';
 
 const MAX_HISTORY = 50;
 
@@ -7,7 +14,7 @@ interface FloorPlanState {
     // Current floor plan
     floorPlan: FloorPlan | null;
 
-    // Selected element ID
+    // Selected element ID (furniture or blueprint)
     selectedElementId: string | null;
 
     // Undo/Redo history
@@ -16,13 +23,36 @@ interface FloorPlanState {
     canUndo: boolean;
     canRedo: boolean;
 
-    // Actions
+    // ─── Furniture Element Actions ───
     setFloorPlan: (floorPlan: FloorPlan) => void;
     addElement: (element: Element) => void;
     updateElement: (id: string, updates: Partial<Element>) => void;
     removeElement: (id: string) => void;
     selectElement: (id: string | null) => void;
     clearFloorPlan: () => void;
+
+    // ─── Blueprint Actions ───
+    /** Bulk-update all blueprint data (used by 2D editor). Pushes history. */
+    setBlueprintData: (data: {
+        points: BlueprintPoint[];
+        walls: BlueprintWall[];
+        doors: BlueprintDoor[];
+        windows: BlueprintWindow[];
+    }, pushToHistory?: boolean) => void;
+
+    addBlueprintPoint: (point: BlueprintPoint) => void;
+    addBlueprintWall: (wall: BlueprintWall) => void;
+    addBlueprintDoor: (door: BlueprintDoor) => void;
+    addBlueprintWindow: (window: BlueprintWindow) => void;
+    updateBlueprintWall: (id: string, updates: Partial<BlueprintWall>) => void;
+    updateBlueprintDoor: (id: string, updates: Partial<BlueprintDoor>) => void;
+    updateBlueprintWindow: (id: string, updates: Partial<BlueprintWindow>) => void;
+    removeBlueprintPoint: (id: string) => void;
+    removeBlueprintWall: (id: string) => void;
+    removeBlueprintDoor: (id: string) => void;
+    removeBlueprintWindow: (id: string) => void;
+
+    // ─── Undo / Redo ───
     undo: () => void;
     redo: () => void;
 }
@@ -39,6 +69,10 @@ const createEmptyFloorPlan = (): FloorPlan => ({
         depth: 10,
         height: 3,
     },
+    points: [],
+    walls: [],
+    doors: [],
+    windows: [],
     elements: [],
     exits: [],
 });
@@ -56,6 +90,27 @@ const pushHistory = (history: FloorPlan[], current: FloorPlan | null): FloorPlan
     return next;
 };
 
+/** Mutation helper: pushes history, clears future, applies updater to floorPlan */
+const mutate = (
+    state: FloorPlanState,
+    updater: (fp: FloorPlan) => Partial<FloorPlan>,
+    skipHistory = false,
+) => {
+    if (!state.floorPlan) return state;
+    const newHistory = skipHistory ? state.history : pushHistory(state.history, state.floorPlan);
+    return {
+        history: newHistory,
+        future: skipHistory ? state.future : [],
+        canUndo: newHistory.length > 0,
+        canRedo: skipHistory ? state.canRedo : false,
+        floorPlan: {
+            ...state.floorPlan,
+            ...updater(state.floorPlan),
+            updatedAt: new Date(),
+        },
+    };
+};
+
 export const useFloorPlanStore = create<FloorPlanState>((set) => ({
     floorPlan: createEmptyFloorPlan(),
     selectedElementId: null,
@@ -66,63 +121,28 @@ export const useFloorPlanStore = create<FloorPlanState>((set) => ({
 
     setFloorPlan: (floorPlan) => set({ floorPlan }),
 
+    // ─── Furniture Element Actions ────────────────────────────────
+
     addElement: (element) =>
-        set((state) => {
-            const newHistory = pushHistory(state.history, state.floorPlan);
-            return {
-                history: newHistory,
-                future: [], // Clear redo on new mutation
-                canUndo: newHistory.length > 0,
-                canRedo: false,
-                floorPlan: state.floorPlan
-                    ? {
-                        ...state.floorPlan,
-                        elements: [...state.floorPlan.elements, element],
-                        updatedAt: new Date(),
-                    }
-                    : null,
-            };
-        }),
+        set((state) => mutate(state, (fp) => ({
+            elements: [...fp.elements, element],
+        }))),
 
     updateElement: (id, updates) =>
-        set((state) => {
-            const newHistory = pushHistory(state.history, state.floorPlan);
-            return {
-                history: newHistory,
-                future: [],
-                canUndo: newHistory.length > 0,
-                canRedo: false,
-                floorPlan: state.floorPlan
-                    ? {
-                        ...state.floorPlan,
-                        elements: state.floorPlan.elements.map((el) =>
-                            el.id === id ? { ...el, ...updates } : el
-                        ),
-                        updatedAt: new Date(),
-                    }
-                    : null,
-            };
-        }),
+        set((state) => mutate(state, (fp) => ({
+            elements: fp.elements.map((el) =>
+                el.id === id ? { ...el, ...updates } : el
+            ),
+        }))),
 
     removeElement: (id) =>
-        set((state) => {
-            const newHistory = pushHistory(state.history, state.floorPlan);
-            return {
-                history: newHistory,
-                future: [],
-                canUndo: newHistory.length > 0,
-                canRedo: false,
-                floorPlan: state.floorPlan
-                    ? {
-                        ...state.floorPlan,
-                        elements: state.floorPlan.elements.filter((el) => el.id !== id),
-                        updatedAt: new Date(),
-                    }
-                    : null,
-                selectedElementId:
-                    state.selectedElementId === id ? null : state.selectedElementId,
-            };
-        }),
+        set((state) => ({
+            ...mutate(state, (fp) => ({
+                elements: fp.elements.filter((el) => el.id !== id),
+            })),
+            selectedElementId:
+                state.selectedElementId === id ? null : state.selectedElementId,
+        })),
 
     selectElement: (id) => set({ selectedElementId: id }),
 
@@ -135,6 +155,86 @@ export const useFloorPlanStore = create<FloorPlanState>((set) => ({
             canUndo: false,
             canRedo: false,
         }),
+
+    // ─── Blueprint Actions ────────────────────────────────────────
+
+    setBlueprintData: (data, pushToHistory = true) =>
+        set((state) => mutate(state, () => ({
+            points: data.points,
+            walls: data.walls,
+            doors: data.doors,
+            windows: data.windows,
+        }), !pushToHistory)),
+
+    addBlueprintPoint: (point) =>
+        set((state) => mutate(state, (fp) => ({
+            points: [...fp.points, point],
+        }))),
+
+    addBlueprintWall: (wall) =>
+        set((state) => mutate(state, (fp) => ({
+            walls: [...fp.walls, wall],
+        }))),
+
+    addBlueprintDoor: (door) =>
+        set((state) => mutate(state, (fp) => ({
+            doors: [...fp.doors, door],
+        }))),
+
+    addBlueprintWindow: (window) =>
+        set((state) => mutate(state, (fp) => ({
+            windows: [...fp.windows, window],
+        }))),
+
+    updateBlueprintWall: (id, updates) =>
+        set((state) => mutate(state, (fp) => ({
+            walls: fp.walls.map((w) => w.id === id ? { ...w, ...updates } : w),
+        }))),
+
+    updateBlueprintDoor: (id, updates) =>
+        set((state) => mutate(state, (fp) => ({
+            doors: fp.doors.map((d) => d.id === id ? { ...d, ...updates } : d),
+        }))),
+
+    updateBlueprintWindow: (id, updates) =>
+        set((state) => mutate(state, (fp) => ({
+            windows: fp.windows.map((w) => w.id === id ? { ...w, ...updates } : w),
+        }))),
+
+    removeBlueprintPoint: (id) =>
+        set((state) => {
+            if (!state.floorPlan) return state;
+            // Cascade: remove walls connected to this point, then doors/windows on those walls
+            const connectedWallIds = state.floorPlan.walls
+                .filter((w) => w.startPointId === id || w.endPointId === id)
+                .map((w) => w.id);
+            return mutate(state, (fp) => ({
+                points: fp.points.filter((p) => p.id !== id),
+                walls: fp.walls.filter((w) => !connectedWallIds.includes(w.id)),
+                doors: fp.doors.filter((d) => !connectedWallIds.includes(d.wallId)),
+                windows: fp.windows.filter((w) => !connectedWallIds.includes(w.wallId)),
+            }));
+        }),
+
+    removeBlueprintWall: (id) =>
+        set((state) => mutate(state, (fp) => ({
+            walls: fp.walls.filter((w) => w.id !== id),
+            // Cascade: remove doors/windows attached to this wall
+            doors: fp.doors.filter((d) => d.wallId !== id),
+            windows: fp.windows.filter((w) => w.wallId !== id),
+        }))),
+
+    removeBlueprintDoor: (id) =>
+        set((state) => mutate(state, (fp) => ({
+            doors: fp.doors.filter((d) => d.id !== id),
+        }))),
+
+    removeBlueprintWindow: (id) =>
+        set((state) => mutate(state, (fp) => ({
+            windows: fp.windows.filter((w) => w.id !== id),
+        }))),
+
+    // ─── Undo / Redo ──────────────────────────────────────────────
 
     undo: () =>
         set((state) => {
