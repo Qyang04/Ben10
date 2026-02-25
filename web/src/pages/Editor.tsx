@@ -30,17 +30,22 @@ import type { Element } from '../types';
  * Defines default dimensions for each element type
  */
 /**
- * Palette element types — furniture only.
+ * Palette element types — furniture and indoor obstacles.
  * Walls/doors/windows are created via the 2D drawing tool.
  */
-type PaletteElementType = 'ramp' | 'stairs' | 'table' | 'chair' | 'counter';
+type PaletteElementType =
+    | 'ramp' | 'stairs'
+    | 'table' | 'round_table' | 'chair' | 'counter' | 'sofa' | 'shelf' | 'bed'
+    | 'pillar' | 'reception_desk' | 'elevator'
+    | 'toilet' | 'sink'
+    | 'vending_machine' | 'fire_extinguisher';
 
 const ELEMENT_TEMPLATES: Record<PaletteElementType, Omit<Element, 'id'>> = {
     ramp: {
         type: 'ramp',
         position: { x: 0, y: 0, z: 0 },
         rotation: { x: 0, y: 0, z: 0 },
-        dimensions: { width: 1.2, height: 0.3, depth: 3.6 }, // 1:12 ratio
+        dimensions: { width: 1.2, height: 0.3, depth: 3.6 },
         properties: {},
     },
     stairs: {
@@ -55,7 +60,14 @@ const ELEMENT_TEMPLATES: Record<PaletteElementType, Omit<Element, 'id'>> = {
         position: { x: 0, y: 0, z: 0 },
         rotation: { x: 0, y: 0, z: 0 },
         dimensions: { width: 1.2, height: 0.75, depth: 0.8 },
-        properties: {},
+        properties: { shape: 'rectangular' },
+    },
+    round_table: {
+        type: 'table',
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        dimensions: { width: 1.2, height: 0.75, depth: 1.2 },
+        properties: { shape: 'round' },
     },
     chair: {
         type: 'chair',
@@ -71,6 +83,93 @@ const ELEMENT_TEMPLATES: Record<PaletteElementType, Omit<Element, 'id'>> = {
         dimensions: { width: 2, height: 0.9, depth: 0.6 },
         properties: {},
     },
+    sofa: {
+        type: 'sofa',
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        dimensions: { width: 1.8, height: 0.7, depth: 0.8 },
+        properties: {},
+    },
+    shelf: {
+        type: 'shelf',
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        dimensions: { width: 0.9, height: 1.8, depth: 0.4 },
+        properties: {},
+    },
+    bed: {
+        type: 'bed',
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        dimensions: { width: 1.4, height: 0.5, depth: 2.0 },
+        properties: {},
+    },
+    pillar: {
+        type: 'pillar',
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        dimensions: { width: 0.4, height: 3.0, depth: 0.4 },
+        properties: {},
+    },
+    reception_desk: {
+        type: 'reception_desk',
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        dimensions: { width: 2.0, height: 1.1, depth: 0.7 },
+        properties: {},
+    },
+    elevator: {
+        type: 'elevator',
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        dimensions: { width: 1.5, height: 2.4, depth: 1.5 },
+        properties: {},
+    },
+    toilet: {
+        type: 'toilet',
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        dimensions: { width: 0.4, height: 0.4, depth: 0.7 },
+        properties: {},
+    },
+    sink: {
+        type: 'sink',
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        dimensions: { width: 0.5, height: 0.85, depth: 0.45 },
+        properties: {},
+    },
+    vending_machine: {
+        type: 'vending_machine',
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        dimensions: { width: 0.8, height: 1.8, depth: 0.7 },
+        properties: {},
+    },
+    fire_extinguisher: {
+        type: 'fire_extinguisher',
+        position: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        dimensions: { width: 0.2, height: 0.5, depth: 0.15 },
+        properties: {},
+    },
+};
+
+/** Palette categories for grouped display */
+const PALETTE_CATEGORIES: { label: string; items: PaletteElementType[] }[] = [
+    { label: 'Accessibility', items: ['ramp', 'stairs', 'elevator'] },
+    { label: 'Furniture', items: ['table', 'round_table', 'chair', 'sofa', 'bed', 'counter', 'shelf'] },
+    { label: 'Infrastructure', items: ['pillar', 'reception_desk'] },
+    { label: 'Fixtures', items: ['toilet', 'sink', 'vending_machine'] },
+    { label: 'Safety', items: ['fire_extinguisher'] },
+];
+
+/** Display labels for types that need formatting */
+const ELEMENT_LABELS: Partial<Record<PaletteElementType, string>> = {
+    round_table: 'Round Table',
+    reception_desk: 'Reception Desk',
+    vending_machine: 'Vending Machine',
+    fire_extinguisher: 'Fire Extinguisher',
 };
 
 /**
@@ -85,28 +184,37 @@ function ElementPalette() {
             ...template,
             id: crypto.randomUUID(),
             position: {
-                x: Math.random() * 4 - 2, // Random x between -2 and 2
+                x: Math.random() * 4 - 2,
                 y: 0,
-                z: Math.random() * 4 - 2, // Random z between -2 and 2
+                z: Math.random() * 4 - 2,
             },
         };
         addElement(newElement);
     };
 
     return (
-        <aside className="w-64 bg-slate-800 border-r border-slate-700 p-4 flex flex-col">
+        <aside className="w-64 bg-slate-800 border-r border-slate-700 p-4 flex flex-col overflow-y-auto">
             <h2 className="text-sm font-semibold text-slate-400 uppercase mb-4">
                 Elements
             </h2>
-            <div className="space-y-2 flex-1">
-                {(Object.keys(ELEMENT_TEMPLATES) as PaletteElementType[]).map((type) => (
-                    <button
-                        key={type}
-                        onClick={() => handleAddElement(type)}
-                        className="w-full px-4 py-3 bg-slate-700 rounded-lg text-left hover:bg-slate-600 transition-colors capitalize"
-                    >
-                        + {type}
-                    </button>
+            <div className="space-y-4 flex-1">
+                {PALETTE_CATEGORIES.map((cat) => (
+                    <div key={cat.label}>
+                        <h3 className="text-xs font-semibold text-slate-500 uppercase mb-2 tracking-wider">
+                            {cat.label}
+                        </h3>
+                        <div className="space-y-1">
+                            {cat.items.map((type) => (
+                                <button
+                                    key={type}
+                                    onClick={() => handleAddElement(type)}
+                                    className="w-full px-3 py-2 bg-slate-700 rounded-lg text-left text-sm hover:bg-slate-600 transition-colors capitalize"
+                                >
+                                    + {ELEMENT_LABELS[type] || type.replace('_', ' ')}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                 ))}
             </div>
             <p className="text-xs text-slate-500 mt-4">

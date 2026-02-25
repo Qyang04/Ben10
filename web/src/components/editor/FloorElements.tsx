@@ -24,6 +24,16 @@ import { Stairs } from '../elements/Stairs';
 import { Table } from '../elements/Table';
 import { Chair } from '../elements/Chair';
 import { Counter } from '../elements/Counter';
+import { Sofa } from '../elements/Sofa';
+import { Shelf } from '../elements/Shelf';
+import { Bed } from '../elements/Bed';
+import { Pillar } from '../elements/Pillar';
+import { ReceptionDesk } from '../elements/ReceptionDesk';
+import { Elevator } from '../elements/Elevator';
+import { Toilet } from '../elements/Toilet';
+import { Sink } from '../elements/Sink';
+import { VendingMachine } from '../elements/VendingMachine';
+import { FireExtinguisher } from '../elements/FireExtinguisher';
 import { TransformableElement } from './TransformableElement';
 
 /**
@@ -37,6 +47,16 @@ const ELEMENT_COMPONENTS: Record<string, React.FC<{ element: Element; isSelected
     table: Table,
     chair: Chair,
     counter: Counter,
+    sofa: Sofa,
+    shelf: Shelf,
+    bed: Bed,
+    pillar: Pillar,
+    reception_desk: ReceptionDesk,
+    elevator: Elevator,
+    toilet: Toilet,
+    sink: Sink,
+    vending_machine: VendingMachine,
+    fire_extinguisher: FireExtinguisher,
 };
 
 interface FloorElementsProps {

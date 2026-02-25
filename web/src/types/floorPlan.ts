@@ -3,7 +3,13 @@
 export type SpaceType = 'cafe' | 'classroom' | 'clinic' | 'office' | 'custom';
 
 /** Element types for palette-placed furniture (3D drag-and-drop) */
-export type ElementType = 'wall' | 'door' | 'ramp' | 'stairs' | 'table' | 'chair' | 'counter';
+export type ElementType =
+    | 'wall' | 'door' | 'ramp' | 'stairs'
+    | 'table' | 'chair' | 'counter'
+    | 'sofa' | 'shelf' | 'bed'
+    | 'pillar' | 'reception_desk' | 'elevator'
+    | 'toilet' | 'sink'
+    | 'vending_machine' | 'fire_extinguisher';
 
 export interface Position {
     x: number;
