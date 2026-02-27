@@ -1,14 +1,15 @@
 /**
  * TransformableElement Component
  * ===============================
- * 
+ *
  * WHAT THIS FILE DOES:
  * - Wraps an element to make it draggable in 3D space
  * - Uses raycaster + ground plane intersection (inspired by wedding repo)
  * - No gizmo arrows — directly click and drag on the ground plane
  * - Grid snaps in real-time while dragging
- * - Right-click + scroll wheel rotates element (yaw)
- * 
+ * - Right/left click + scroll wheel rotates element (yaw)
+ * - Constrains movement/rotation so elements cannot go beyond room walls
+ *
  * HOW IT WORKS:
  * 1. Click element to select (shows selection ring)
  * 2. Pointer down → captures pointer, creates ground plane, calculates offset
@@ -16,12 +17,13 @@
  * 4. Pointer up → releases capture, commits position to store, re-enables orbit
  */
 
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useFloorPlanStore } from '../../store';
 import { snapToGrid } from '../../utils/gridSnap';
 import { DimensionHandles } from './DimensionHandles';
+import { computeRoomPolygonWorld, isPointInRoomPolygon, type RoomPolygon } from '../../utils/roomGeometry';
 
 interface TransformableElementProps {
     elementId: string;
@@ -59,6 +61,7 @@ export function TransformableElement({
 }: TransformableElementProps) {
     const groupRef = useRef<THREE.Group>(null);
     const updateElement = useFloorPlanStore((state) => state.updateElement);
+    const floorPlan = useFloorPlanStore((state) => state.floorPlan);
     const element = useFloorPlanStore(
         (state) => state.floorPlan?.elements.find((el) => el.id === elementId) ?? null
     );
@@ -81,10 +84,55 @@ export function TransformableElement({
     // Access the R3F scene internals
     const { gl } = useThree();
 
+    // Room boundary polygon in world coordinates (x,z), derived from floorPlan.
+    // useMemo + try/catch so geometry issues don't crash the app or cause sync-store loops.
+    const roomPolygon: RoomPolygon | null = useMemo(() => {
+        try {
+            if (!floorPlan) return null;
+            return computeRoomPolygonWorld(floorPlan.points, floorPlan.walls);
+        } catch (err) {
+            console.error('Failed to compute room polygon:', err);
+            return null;
+        }
+    }, [floorPlan?.points, floorPlan?.walls]);
+
     const wrapRadians = useCallback((rad: number) => {
         const tau = Math.PI * 2;
         return ((rad % tau) + tau) % tau;
     }, []);
+
+    const isFootprintInsideRoom = useCallback(
+        (x: number, z: number, yaw: number): boolean => {
+            if (!element) return true;
+            if (!roomPolygon) return true;
+
+            const dims = element.dimensions;
+            if (!dims) return true;
+            const { width, depth } = dims;
+            const halfW = width / 2;
+            const halfD = depth / 2;
+            const cos = Math.cos(yaw);
+            const sin = Math.sin(yaw);
+
+            const samplePoints: [number, number][] = [
+                [0, 0], // center
+                [-halfW, -halfD],
+                [halfW, -halfD],
+                [halfW, halfD],
+                [-halfW, halfD],
+            ];
+
+            for (const [lx, lz] of samplePoints) {
+                const wx = x + lx * cos - lz * sin;
+                const wz = z + lx * sin + lz * cos;
+                if (!isPointInRoomPolygon(wx, wz, roomPolygon)) {
+                    return false;
+                }
+            }
+            return true;
+        },
+        [element, roomPolygon],
+    );
 
     // Keep local rotation in sync with store unless actively rotating.
     useEffect(() => {
@@ -121,10 +169,16 @@ export function TransformableElement({
         if (!wheelRotateActive) return;
         e.preventDefault();
 
-        // wheel: deltaY > 0 usually scroll down
+        if (!groupRef.current) return;
+        const { x, z } = groupRef.current.position;
+
         const delta = -e.deltaY * ROTATE_WHEEL_SENSITIVITY;
-        setLocalRotation((prev) => [prev[0], wrapRadians(prev[1] + delta), prev[2]]);
-    }, [wheelRotateActive, wrapRadians]);
+        setLocalRotation((prev) => {
+            const nextYaw = wrapRadians(prev[1] + delta);
+            if (!isFootprintInsideRoom(x, z, nextYaw)) return prev;
+            return [prev[0], nextYaw, prev[2]];
+        });
+    }, [wheelRotateActive, wrapRadians, isFootprintInsideRoom]);
 
     useEffect(() => {
         if (!wheelRotateActive) return;
@@ -235,10 +289,14 @@ export function TransformableElement({
                 // Keep Y at current level (ground)
                 const nextY = groupRef.current.position.y;
 
-                groupRef.current.position.set(nextX, nextY, nextZ);
+                // Reject movement that would push element beyond room walls
+                const yaw = localRotation[1];
+                if (isFootprintInsideRoom(nextX, nextZ, yaw)) {
+                    groupRef.current.position.set(nextX, nextY, nextZ);
+                }
             }
         },
-        []
+        [isFootprintInsideRoom, localRotation]
     );
 
     /**

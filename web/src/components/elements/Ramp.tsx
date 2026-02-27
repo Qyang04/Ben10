@@ -32,7 +32,9 @@ export function Ramp({ element, isSelected }: RampProps) {
         <group>
             {/* Ramp surface - simplified as a box for now */}
             <mesh
-                position={[0, height / 2, depth / 2]}
+                // Center the ramp geometry around the element's origin so
+                // the pivot/selection ring are at the ramp's visual center.
+                position={[0, height / 2, 0]}
                 rotation={[Math.atan2(height, depth), 0, 0]}
                 castShadow
                 receiveShadow
