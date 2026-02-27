@@ -24,6 +24,7 @@ import { useFloorPlanStore } from '../../store';
 import { snapToGrid } from '../../utils/gridSnap';
 import { DimensionHandles } from './DimensionHandles';
 import { computeRoomPolygonWorld, isPointInRoomPolygon, type RoomPolygon } from '../../utils/roomGeometry';
+import type { Element as FloorElement } from '../../types';
 
 interface TransformableElementProps {
     elementId: string;
@@ -62,9 +63,8 @@ export function TransformableElement({
     const groupRef = useRef<THREE.Group>(null);
     const updateElement = useFloorPlanStore((state) => state.updateElement);
     const floorPlan = useFloorPlanStore((state) => state.floorPlan);
-    const element = useFloorPlanStore(
-        (state) => state.floorPlan?.elements.find((el) => el.id === elementId) ?? null
-    );
+    const element: FloorElement | null =
+        floorPlan?.elements.find((el) => el.id === elementId) ?? null;
     const [isHovered, setIsHovered] = useState(false);
     const [wheelRotateActive, setWheelRotateActive] = useState(false);
     const [localRotation, setLocalRotation] = useState<[number, number, number]>(rotation);
@@ -96,42 +96,74 @@ export function TransformableElement({
         }
     }, [floorPlan?.points, floorPlan?.walls]);
 
+    // Other elements for collision checks (exclude self)
+    const otherElements: FloorElement[] = useMemo(
+        () =>
+            floorPlan?.elements.filter(
+                (el) => el.id !== elementId && !!el.dimensions,
+            ) ?? [],
+        [floorPlan?.elements, elementId],
+    );
+
     const wrapRadians = useCallback((rad: number) => {
         const tau = Math.PI * 2;
         return ((rad % tau) + tau) % tau;
     }, []);
 
-    const isFootprintInsideRoom = useCallback(
+    const isPlacementAllowed = useCallback(
         (x: number, z: number, yaw: number): boolean => {
             if (!element) return true;
-            if (!roomPolygon) return true;
-
             const dims = element.dimensions;
             if (!dims) return true;
-            const { width, depth } = dims;
-            const halfW = width / 2;
-            const halfD = depth / 2;
-            const cos = Math.cos(yaw);
-            const sin = Math.sin(yaw);
 
-            const samplePoints: [number, number][] = [
-                [0, 0], // center
-                [-halfW, -halfD],
-                [halfW, -halfD],
-                [halfW, halfD],
-                [-halfW, halfD],
-            ];
+            // ── 1) Stay inside room polygon (if available) ──────────
+            if (roomPolygon) {
+                const { width, depth } = dims;
+                const halfW = width / 2;
+                const halfD = depth / 2;
+                const cos = Math.cos(yaw);
+                const sin = Math.sin(yaw);
 
-            for (const [lx, lz] of samplePoints) {
-                const wx = x + lx * cos - lz * sin;
-                const wz = z + lx * sin + lz * cos;
-                if (!isPointInRoomPolygon(wx, wz, roomPolygon)) {
+                const samplePoints: [number, number][] = [
+                    [0, 0], // center
+                    [-halfW, -halfD],
+                    [halfW, -halfD],
+                    [halfW, halfD],
+                    [-halfW, halfD],
+                ];
+
+                for (const [lx, lz] of samplePoints) {
+                    const wx = x + lx * cos - lz * sin;
+                    const wz = z + lx * sin + lz * cos;
+                    if (!isPointInRoomPolygon(wx, wz, roomPolygon)) {
+                        return false;
+                    }
+                }
+            }
+
+            // ── 2) Prevent overlap with other elements ──────────────
+            const selfRadius = 0.5 * Math.sqrt(dims.width ** 2 + dims.depth ** 2);
+
+            for (const other of otherElements) {
+                if (!other.dimensions) continue;
+                const ox = other.position.x;
+                const oz = other.position.z;
+                const otherRadius =
+                    0.5 * Math.sqrt(other.dimensions.width ** 2 + other.dimensions.depth ** 2);
+
+                const dx = x - ox;
+                const dz = z - oz;
+                const distSq = dx * dx + dz * dz;
+                const minDist = selfRadius + otherRadius;
+
+                if (distSq < minDist * minDist) {
                     return false;
                 }
             }
+
             return true;
         },
-        [element, roomPolygon],
+        [element, roomPolygon, otherElements],
     );
 
     // Keep local rotation in sync with store unless actively rotating.
@@ -175,10 +207,10 @@ export function TransformableElement({
         const delta = -e.deltaY * ROTATE_WHEEL_SENSITIVITY;
         setLocalRotation((prev) => {
             const nextYaw = wrapRadians(prev[1] + delta);
-            if (!isFootprintInsideRoom(x, z, nextYaw)) return prev;
+            if (!isPlacementAllowed(x, z, nextYaw)) return prev;
             return [prev[0], nextYaw, prev[2]];
         });
-    }, [wheelRotateActive, wrapRadians, isFootprintInsideRoom]);
+    }, [wheelRotateActive, wrapRadians, isPlacementAllowed]);
 
     useEffect(() => {
         if (!wheelRotateActive) return;
@@ -290,13 +322,14 @@ export function TransformableElement({
                 const nextY = groupRef.current.position.y;
 
                 // Reject movement that would push element beyond room walls
+                // or cause overlap with other elements
                 const yaw = localRotation[1];
-                if (isFootprintInsideRoom(nextX, nextZ, yaw)) {
+                if (isPlacementAllowed(nextX, nextZ, yaw)) {
                     groupRef.current.position.set(nextX, nextY, nextZ);
                 }
             }
         },
-        [isFootprintInsideRoom, localRotation]
+        [isPlacementAllowed, localRotation]
     );
 
     /**
