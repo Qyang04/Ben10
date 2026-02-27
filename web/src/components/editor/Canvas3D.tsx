@@ -36,7 +36,13 @@ import BlueprintWalls3D from '../elements/BlueprintWalls3D';
  * Scene component containing all 3D objects and helpers
  * Separated from Canvas for cleaner code organization
  */
-function Scene({ onExportReady }: { onExportReady: (fn: (filename: string) => Promise<void>) => void }) {
+function Scene({
+    onExportReady,
+    shortWalls,
+}: {
+    onExportReady: (fn: (filename: string) => Promise<void>) => void;
+    shortWalls: boolean;
+}) {
     const floorPlan = useFloorPlanStore((state) => state.floorPlan);
     const selectElement = useFloorPlanStore((state) => state.selectElement);
     const [orbitEnabled, setOrbitEnabled] = useState(true);
@@ -138,7 +144,7 @@ function Scene({ onExportReady }: { onExportReady: (fn: (filename: string) => Pr
             <SceneExporter onReady={onExportReady} />
 
             {/* Blueprint walls/doors/windows from 2D drawing */}
-            <BlueprintWalls3D />
+            <BlueprintWalls3D shortWalls={shortWalls} />
 
             {/* Palette-placed furniture elements */}
             <FloorElements onOrbitToggle={handleOrbitToggle} />
@@ -166,6 +172,7 @@ export default function Canvas3D() {
     const floorPlan = useFloorPlanStore((state) => state.floorPlan);
     const [exporting, setExporting] = useState(false);
     const exportFnRef = useRef<((filename: string) => Promise<void>) | null>(null);
+    const [shortWalls, setShortWalls] = useState(false);
 
     const handleExportReady = useCallback((fn: (filename: string) => Promise<void>) => {
         exportFnRef.current = fn;
@@ -184,6 +191,10 @@ export default function Canvas3D() {
         }
     }, [floorPlan?.name]);
 
+    const toggleShortWalls = useCallback(() => {
+        setShortWalls((prev) => !prev);
+    }, []);
+
     return (
         <div style={{ width: '100%', height: '100%', position: 'relative' }}>
             <Canvas
@@ -196,11 +207,33 @@ export default function Canvas3D() {
                 }}
                 style={{ background: '#0f172a' }} // Dark blue background
             >
-                <Scene onExportReady={handleExportReady} />
+                <Scene onExportReady={handleExportReady} shortWalls={shortWalls} />
             </Canvas>
 
             {/* Export button — rendered as DOM overlay, NOT inside the 3D scene */}
             <ExportButtonUI exporting={exporting} onExport={handleExport} />
+
+            {/* Wall height toggle — switches between full and shortened 3D walls */}
+            <button
+                type="button"
+                onClick={toggleShortWalls}
+                style={{
+                    position: 'absolute',
+                    top: 16,
+                    left: 16,
+                    zIndex: 20,
+                    background: shortWalls ? '#6366f1' : '#334155',
+                    color: 'white',
+                    border: '1px solid #475569',
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    fontWeight: 500,
+                }}
+            >
+                {shortWalls ? 'Full-height walls' : 'Short walls view'}
+            </button>
         </div>
     );
 }

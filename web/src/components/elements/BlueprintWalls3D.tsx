@@ -54,6 +54,10 @@ const windowGlassMaterial = new THREE.MeshStandardMaterial({
 
 const cornerPostMaterial = new THREE.MeshStandardMaterial({ color: '#64748b' });
 
+// Shorter visual wall height cap for optional "short walls" view in 3D.
+// This only affects rendering, not blueprint data or measurements.
+const WALL_VIEW_MAX_HEIGHT = 1.0; // meters
+
 // ─── Wall Segment ──────────────────────────────────────────────────
 
 interface WallSegmentProps {
@@ -85,13 +89,19 @@ interface ComplexWallProps {
     wallWindows: BlueprintWindow[];
 }
 
+interface BlueprintWalls3DProps {
+    /** When true, clamp visual wall height so furniture is easier to see. */
+    shortWalls?: boolean;
+}
+
 const ComplexWallMesh = React.memo(function ComplexWallMesh({
     wall, start, end, wallDoors, wallWindows,
 }: ComplexWallProps) {
     const { totalLength, thickness, angle, midX, midY, segments } = useMemo(() => {
         const len = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2) / PIXELS_PER_METER;
         const thick = wall.thickness / PIXELS_PER_METER;
-        const h = wall.height || DEFAULT_WALL_HEIGHT;
+        const baseHeight = wall.height || DEFAULT_WALL_HEIGHT;
+        const h = baseHeight; // actual blueprint height; any view clamping happens at parent level
         const ang = Math.atan2(end.y - start.y, end.x - start.x);
         const mx = (start.x + end.x) / 2 / PIXELS_PER_METER;
         const my = (start.y + end.y) / 2 / PIXELS_PER_METER;
@@ -285,12 +295,10 @@ const FloorMesh = React.memo(function FloorMesh({
 const CornerPost = React.memo(function CornerPost({
     point, connectedWalls,
 }: { point: BlueprintPoint; connectedWalls: BlueprintWall[] }) {
-    const maxHeight = useMemo(() =>
-        connectedWalls.length > 0
-            ? Math.max(...connectedWalls.map((w) => w.height || DEFAULT_WALL_HEIGHT))
-            : DEFAULT_WALL_HEIGHT,
-        [connectedWalls],
-    );
+    const maxHeight = useMemo(() => {
+        if (connectedWalls.length === 0) return DEFAULT_WALL_HEIGHT;
+        return Math.max(...connectedWalls.map((w) => w.height || DEFAULT_WALL_HEIGHT));
+    }, [connectedWalls]);
 
     const geometry = useMemo(
         () => new THREE.CylinderGeometry(0.1, 0.1, maxHeight, 12),
@@ -308,7 +316,7 @@ const CornerPost = React.memo(function CornerPost({
 
 // ─── Main Component ────────────────────────────────────────────────
 
-export default function BlueprintWalls3D() {
+export default function BlueprintWalls3D({ shortWalls = false }: BlueprintWalls3DProps) {
     const floorPlan = useFloorPlanStore((s) => s.floorPlan);
 
     const points = useMemo(() => floorPlan?.points ?? [], [floorPlan?.points]);
@@ -358,8 +366,15 @@ export default function BlueprintWalls3D() {
 
     if (walls.length === 0) return null;
 
+    // When shortWalls is true, clamp visual wall and corner-post heights
+    const wallHeightScale = shortWalls ? Math.min(WALL_VIEW_MAX_HEIGHT / DEFAULT_WALL_HEIGHT, 1) : 1;
+
     return (
-        <group name="blueprint-3d" position={[-center[0], 0, -center[2]]}>
+        <group
+            name="blueprint-3d"
+            position={[-center[0], 0, -center[2]]}
+            scale={[1, wallHeightScale, 1]}
+        >
             {/* Walls */}
             {wallData.map(({ wall, start, end, wallDoors, wallWindows }) => (
                 <ComplexWallMesh
