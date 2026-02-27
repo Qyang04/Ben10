@@ -8,6 +8,7 @@
  * - No gizmo arrows — directly click and drag on the ground plane
  * - Grid snaps in real-time while dragging
  * - Left/right click + Q or E rotates element (yaw, 5° per press)
+ * - Left/right click + W or S adjusts element height
  * - Left/right click + scroll wheel adjusts element width
  * - Constrains movement/rotation so elements cannot go beyond room walls
  *
@@ -52,6 +53,7 @@ const SELECTION_RING_COLOR = '#3b82f6'; // Blue ring
 const HOVER_EMISSIVE = 0x1a3a5c; // Subtle blue glow
 const ROTATE_KEY_STEP = (5 * Math.PI) / 180; // 5° per key press
 const WIDTH_SCROLL_STEP = 0.1; // 0.1m width change per scroll "tick"
+const HEIGHT_KEY_STEP = 0.1; // 0.1m height change per key press
 
 export function TransformableElement({
     elementId,
@@ -199,24 +201,35 @@ export function TransformableElement({
         });
     }, [elementId, updateElement]);
 
-    // Keyboard rotation: Q / E while a mouse button is held on the selected element.
+    // Keyboard rotation / height: Q / E / W / S while a mouse button is held on the selected element.
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if (!isSelected || !rotateKeyActiveRef.current || !groupRef.current) return;
             const key = e.key.toLowerCase();
-            if (key !== 'q' && key !== 'e') return;
+            if (key !== 'q' && key !== 'e' && key !== 'w' && key !== 's') return;
 
             e.preventDefault();
-            const { x, z } = groupRef.current.position;
-            const delta = key === 'q' ? -ROTATE_KEY_STEP : ROTATE_KEY_STEP;
 
-            setLocalRotation((prev) => {
-                const nextYaw = wrapRadians(prev[1] + delta);
-                if (!isPlacementAllowed(x, z, nextYaw)) return prev;
-                const next: [number, number, number] = [prev[0], nextYaw, prev[2]];
-                commitRotation(next);
-                return next;
-            });
+            if (key === 'q' || key === 'e') {
+                const { x, z } = groupRef.current.position;
+                const delta = key === 'q' ? -ROTATE_KEY_STEP : ROTATE_KEY_STEP;
+
+                setLocalRotation((prev) => {
+                    const nextYaw = wrapRadians(prev[1] + delta);
+                    if (!isPlacementAllowed(x, z, nextYaw)) return prev;
+                    const next: [number, number, number] = [prev[0], nextYaw, prev[2]];
+                    commitRotation(next);
+                    return next;
+                });
+            } else if (key === 'w' || key === 's') {
+                if (!element || !element.dimensions) return;
+                const dir = key === 'w' ? 1 : -1;
+                const rawNext = element.dimensions.height + dir * HEIGHT_KEY_STEP;
+                const nextHeight = Math.max(0.2, Number(rawNext.toFixed(2)));
+                updateElement(elementId, {
+                    dimensions: { ...element.dimensions, height: nextHeight },
+                });
+            }
         };
 
         window.addEventListener('keydown', handleKeyDown);

@@ -252,7 +252,7 @@ export default function Canvas3D() {
                     whiteSpace: 'pre-line',
                 }}
             >
-                {'Element: hold left/right click + Q/E to rotate\nElement: hold left/right click + scroll to adjust width'}
+                {'Element: hold left/right click + Q/E to rotate\nElement: hold left/right click + W/S to adjust height\nElement: hold left/right click + scroll to adjust width'}
             </div>
         </div>
     );
