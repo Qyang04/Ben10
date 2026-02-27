@@ -359,7 +359,7 @@ export default function BlueprintWalls3D() {
     if (walls.length === 0) return null;
 
     return (
-        <group position={[-center[0], 0, -center[2]]}>
+        <group name="blueprint-3d" position={[-center[0], 0, -center[2]]}>
             {/* Walls */}
             {wallData.map(({ wall, start, end, wallDoors, wallWindows }) => (
                 <ComplexWallMesh

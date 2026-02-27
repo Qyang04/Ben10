@@ -75,7 +75,7 @@ export function FloorElements({ onOrbitToggle }: FloorElementsProps) {
     if (!floorPlan) return null;
 
     return (
-        <group>
+        <group name="floor-elements-3d">
             {floorPlan.elements.map((element) => {
                 const Component = ELEMENT_COMPONENTS[element.type];
 

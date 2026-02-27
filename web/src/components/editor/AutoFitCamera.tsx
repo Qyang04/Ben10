@@ -7,7 +7,7 @@
  * HOW: Computes bounding box of all scene meshes, calculates optimal camera
  * distance from FOV, animates camera to frame the scene.
  * 
- * WHEN: Re-frames on element count change (add/remove).
+ * WHEN: Frames once when a floor plan is loaded (by id).
  */
 
 import { useEffect, useRef } from 'react';
@@ -17,39 +17,43 @@ import { useFloorPlanStore } from '../../store';
 
 export function AutoFitCamera() {
     const { camera, scene } = useThree();
-    const elementCount = useFloorPlanStore(
-        (state) => state.floorPlan?.elements.length ?? 0
-    );
-    const lastCount = useRef(elementCount);
+    const floorPlanId = useFloorPlanStore((state) => state.floorPlan?.id ?? null);
+    const lastFittedPlanId = useRef<string | null>(null);
 
     useEffect(() => {
-        // Only refit when element count changes (add/remove)
-        if (elementCount === lastCount.current && elementCount > 0) return;
-        lastCount.current = elementCount;
+        // Fit only once per loaded floor plan id.
+        if (!floorPlanId) return;
+        if (lastFittedPlanId.current === floorPlanId) return;
+        lastFittedPlanId.current = floorPlanId;
 
-        // Skip if no elements — keep the default camera position
-        if (elementCount === 0) return;
-
-        // Small delay to let R3F render the new element
+        // Small delay to let R3F mount scene content after load.
         const timer = setTimeout(() => {
+            const roots = [
+                scene.getObjectByName('blueprint-3d'),
+                scene.getObjectByName('floor-elements-3d'),
+            ].filter(Boolean) as THREE.Object3D[];
+
+            if (roots.length === 0) return;
+
             const box = new THREE.Box3();
             let hasMeshes = false;
 
-            scene.traverse((child) => {
-                if ((child as THREE.Mesh).isMesh) {
+            for (const root of roots) {
+                root.traverse((child) => {
+                    if (!(child as THREE.Mesh).isMesh) return;
                     const mesh = child as THREE.Mesh;
-                    if (mesh.geometry) {
-                        mesh.geometry.computeBoundingBox();
-                        if (mesh.geometry.boundingBox) {
-                            const worldBox = mesh.geometry.boundingBox
-                                .clone()
-                                .applyMatrix4(mesh.matrixWorld);
-                            box.union(worldBox);
-                            hasMeshes = true;
-                        }
-                    }
-                }
-            });
+                    if (!mesh.geometry) return;
+
+                    mesh.geometry.computeBoundingBox();
+                    if (!mesh.geometry.boundingBox) return;
+
+                    const worldBox = mesh.geometry.boundingBox
+                        .clone()
+                        .applyMatrix4(mesh.matrixWorld);
+                    box.union(worldBox);
+                    hasMeshes = true;
+                });
+            }
 
             if (!hasMeshes) return;
 
@@ -72,10 +76,10 @@ export function AutoFitCamera() {
             );
             camera.lookAt(center);
             camera.updateProjectionMatrix();
-        }, 100);
+        }, 150);
 
         return () => clearTimeout(timer);
-    }, [elementCount, camera, scene]);
+    }, [floorPlanId, camera, scene]);
 
     return null; // This is a logic-only component
 }
