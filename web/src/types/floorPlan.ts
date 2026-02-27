@@ -64,6 +64,10 @@ export interface BlueprintDoor {
     offset: number; // distance from startPoint in pixels
     width: number;  // pixels
     height: number; // meters
+    /** Hinge side when looking along wall start → end. Default: 'left'. */
+    hinge?: 'left' | 'right';
+    /** Swing direction relative to wall. Default: 'in'. */
+    swing?: 'in' | 'out';
 }
 
 /** Window attached to a wall at an offset from startPoint */

@@ -366,6 +366,8 @@ export default function Canvas2D() {
                             offset: dist,
                             width: DEFAULT_DOOR_WIDTH,
                             height: DEFAULT_DOOR_HEIGHT,
+                            hinge: 'left',
+                            swing: 'in',
                         };
                         commitToStore(points, walls, [...doors, newDoor], windows, true);
                     } else {
@@ -527,7 +529,9 @@ export default function Canvas2D() {
             const active = document.activeElement?.tagName;
             if (active === 'INPUT' || active === 'TEXTAREA') return;
 
-            switch (e.key.toLowerCase()) {
+            const key = e.key.toLowerCase();
+
+            switch (key) {
                 case 'v':
                     setMode('SELECT');
                     setActiveDrawId(null);
@@ -561,6 +565,33 @@ export default function Canvas2D() {
 
             if (mode === 'SELECT' && (e.key === 'Delete' || e.key === 'Backspace')) {
                 deleteSelection();
+            }
+
+            // Door direction controls when a door is selected in SELECT mode
+            if (mode === 'SELECT' && selectedDoorId) {
+                if (key === 'l') {
+                    // Flip hinge side (left/right)
+                    const updatedDoors = doors.map((d) =>
+                        d.id === selectedDoorId
+                            ? {
+                                ...d,
+                                hinge: ((d.hinge ?? 'left') === 'left' ? 'right' : 'left') as BlueprintDoor['hinge'],
+                            }
+                            : d,
+                    );
+                    commitToStore(points, walls, updatedDoors, windows, true);
+                } else if (key === 'i') {
+                    // Flip swing direction (in/out)
+                    const updatedDoors = doors.map((d) =>
+                        d.id === selectedDoorId
+                            ? {
+                                ...d,
+                                swing: ((d.swing ?? 'in') === 'in' ? 'out' : 'in') as BlueprintDoor['swing'],
+                            }
+                            : d,
+                    );
+                    commitToStore(points, walls, updatedDoors, windows, true);
+                }
             }
         };
 
@@ -695,9 +726,15 @@ export default function Canvas2D() {
                             const cx = start.x + dx;
                             const cy = start.y + dy;
                             const isSelected = selectedDoorId === door.id;
+
+                            const hinge = door.hinge ?? 'left';
+                            const swing = door.swing ?? 'in';
+                            const hingeScale = hinge === 'right' ? -1 : 1;
+                            const swingScale = swing === 'out' ? -1 : 1;
+
                             return (
                                 <g key={door.id}
-                                    transform={`translate(${cx}, ${cy}) rotate(${angle * 180 / Math.PI})`}
+                                    transform={`translate(${cx}, ${cy}) rotate(${angle * 180 / Math.PI}) scale(${hingeScale}, ${swingScale})`}
                                     onPointerDown={(e) => handleDoorDown(e, door.id)}
                                     style={{ cursor: mode === 'SELECT' ? 'move' : 'default' }}
                                 >
@@ -827,7 +864,7 @@ export default function Canvas2D() {
                         : mode === 'WINDOW' ? '🪟 Hover near a wall and click to place a window'
                             : mode === 'PAN' ? '🤚 Drag to pan • Scroll to zoom'
                                 : mode === 'SELECT'
-                                    ? '⬆️ Click elements to select • Drag to move\nBackspace/Delete to remove'
+                                    ? '⬆️ Click elements to select • Drag to move\n⬆️ Backspace/Delete to remove\n⬆️ Door: L = left/right • I = in/out'
                                     : ''}
             </div>
 
