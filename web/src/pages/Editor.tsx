@@ -20,10 +20,10 @@ import { Canvas3D } from '../components/editor';
 import Canvas2D from '../components/editor/Canvas2D';
 import { useFloorPlanStore } from '../store';
 import { useViewModeStore } from '../store/viewModeStore';
-import { saveFloorPlan, loadFloorPlan } from '../services/floorPlanService';
+import { saveFloorPlan, loadFloorPlan, listFloorPlans } from '../services/floorPlanService';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import { WALL_TEXTURES } from '../components/elements/wallTextures';
-import type { Element } from '../types';
+import type { Element, FloorPlan } from '../types';
 
 /**
  * Element templates for the palette
@@ -419,11 +419,18 @@ function PropertiesPanel() {
 export default function Editor() {
     const floorPlan = useFloorPlanStore((state) => state.floorPlan);
     const setFloorPlan = useFloorPlanStore((state) => state.setFloorPlan);
+    const clearFloorPlan = useFloorPlanStore((state) => state.clearFloorPlan);
     const { canUndo, canRedo, undo, redo } = useUndoRedo();
     const viewMode = useViewModeStore((state) => state.mode);
     const setViewMode = useViewModeStore((state) => state.setMode);
     const [isSaving, setIsSaving] = useState(false);
     const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+    const [isLoadPickerOpen, setIsLoadPickerOpen] = useState(false);
+    const [isLoadingList, setIsLoadingList] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const [availablePlans, setAvailablePlans] = useState<FloorPlan[]>([]);
+    const [isEditingName, setIsEditingName] = useState(false);
+    const [nameDraft, setNameDraft] = useState('');
 
     /**
      * Handle save to Firestore
@@ -433,6 +440,18 @@ export default function Editor() {
     const handleSave = async () => {
         if (!floorPlan) return;
 
+        // Ask for a name only the first time (new/unnamed floor plan)
+        let name = floorPlan.name;
+        if (!name || name.trim() === '') {
+            const input = window.prompt('Name this floor plan:', name || 'Untitled Floor Plan');
+            if (!input) {
+                // User cancelled or left blank → abort save
+                return;
+            }
+            name = input.trim();
+            if (!name) return;
+        }
+
         setIsSaving(true);
         setSaveStatus('idle');
 
@@ -440,9 +459,12 @@ export default function Editor() {
             // For now, use a demo user ID (would come from auth in production)
             const floorPlanToSave = {
                 ...floorPlan,
+                name,
                 userId: 'demo-user',
             };
             await saveFloorPlan(floorPlanToSave);
+            // Update local store so header reflects the saved name
+            setFloorPlan(floorPlanToSave);
             setSaveStatus('saved');
 
             // Reset status after 2 seconds
@@ -456,29 +478,96 @@ export default function Editor() {
     };
 
     /**
-     * Handle load from Firestore
-     * WHAT: Loads floor plan by ID from Firebase
-     * WHY: Restore previously saved work
+     * Open load dialog and fetch list of saved floor plans
+     * WHAT: Shows all saved records so user can pick which to open
+     * WHY: Let user choose which floor plan to display
      */
     const handleLoad = async () => {
-        if (!floorPlan?.id) return;
-
+        setIsLoadPickerOpen(true);
+        setIsLoadingList(true);
+        setLoadError(null);
         try {
-            const loaded = await loadFloorPlan(floorPlan.id);
-            if (loaded) {
-                setFloorPlan(loaded);
-                alert('Floor plan loaded successfully!');
-            } else {
-                alert('No saved floor plan found with this ID');
+            // TODO: replace demo-user with real auth user ID
+            const plans = await listFloorPlans('demo-user');
+            // Sort by most recently created first
+            const sorted = [...plans].sort(
+                (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+            );
+            setAvailablePlans(sorted);
+            if (plans.length === 0) {
+                setLoadError('No saved floor plans found for this user.');
             }
         } catch (error) {
             console.error('Load failed:', error);
-            alert('Failed to load floor plan');
+            setLoadError('Failed to load saved floor plans.');
+        } finally {
+            setIsLoadingList(false);
         }
     };
 
+    const handleBeginEditName = () => {
+        if (!floorPlan) return;
+        setIsEditingName(true);
+        setNameDraft(floorPlan.name || 'Untitled Floor Plan');
+    };
+
+    const handleCommitNameEdit = async () => {
+        if (!floorPlan) {
+            setIsEditingName(false);
+            return;
+        }
+        const trimmed = nameDraft.trim();
+        if (!trimmed) {
+            setIsEditingName(false);
+            return;
+        }
+        const updated: FloorPlan = { ...floorPlan, name: trimmed };
+
+        setIsSaving(true);
+        setSaveStatus('idle');
+        try {
+            const toSave = {
+                ...updated,
+                userId: updated.userId || 'demo-user',
+            };
+            await saveFloorPlan(toSave);
+            setFloorPlan(toSave);
+            setSaveStatus('saved');
+            setTimeout(() => setSaveStatus('idle'), 2000);
+        } catch (error) {
+            console.error('Auto-save name failed:', error);
+            setSaveStatus('error');
+        } finally {
+            setIsSaving(false);
+            setIsEditingName(false);
+        }
+    };
+
+    const handleSelectFloorPlan = async (planId: string) => {
+        try {
+            const loaded = await loadFloorPlan(planId);
+            if (loaded) {
+                setFloorPlan(loaded);
+                setIsLoadPickerOpen(false);
+            } else {
+                setLoadError('Selected floor plan could not be found.');
+            }
+        } catch (error) {
+            console.error('Load selected floor plan failed:', error);
+            setLoadError('Failed to load selected floor plan.');
+        }
+    };
+
+    const handleNew = () => {
+        clearFloorPlan();
+        setSaveStatus('idle');
+        setIsLoadPickerOpen(false);
+        setLoadError(null);
+        setAvailablePlans([]);
+    };
+
     return (
-        <div className="min-h-screen bg-slate-900 text-white flex flex-col">
+        <div className="min-h-screen bg-slate-900 text-white flex flex-col relative">
             {/* Header */}
             <header className="bg-slate-800 border-b border-slate-700 px-4 py-3 flex items-center justify-between">
                 <div className="flex items-center gap-4">
@@ -486,7 +575,31 @@ export default function Editor() {
                         AccessAI
                     </Link>
                     <span className="text-slate-500">|</span>
-                    <span className="text-slate-300">{floorPlan?.name || 'Untitled'}</span>
+                    {isEditingName ? (
+                        <input
+                            autoFocus
+                            value={nameDraft}
+                            onChange={(e) => setNameDraft(e.target.value)}
+                            onBlur={handleCommitNameEdit}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleCommitNameEdit();
+                                } else if (e.key === 'Escape') {
+                                    setIsEditingName(false);
+                                }
+                            }}
+                            className="bg-slate-700 text-slate-100 text-sm px-2 py-1 rounded border border-slate-500 outline-none"
+                        />
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={handleBeginEditName}
+                            className="text-slate-300 hover:text-white text-sm underline-offset-2 hover:underline"
+                        >
+                            {floorPlan?.name || 'Untitled Floor Plan'}
+                        </button>
+                    )}
                     <span className="text-xs text-slate-500">
                         ({floorPlan?.elements.length || 0} elements)
                     </span>
@@ -535,6 +648,12 @@ export default function Editor() {
                     ))}
                     <span className="text-slate-600">|</span>
                     <button
+                        onClick={handleNew}
+                        className="px-4 py-2 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors"
+                    >
+                        New
+                    </button>
+                    <button
                         onClick={handleLoad}
                         className="px-4 py-2 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors"
                     >
@@ -558,6 +677,57 @@ export default function Editor() {
                     </Link>
                 </div>
             </header>
+
+            {/* Load Floor Plan Picker Overlay */}
+            {isLoadPickerOpen && (
+                <div className="fixed inset-0 z-40 flex items-start justify-center pt-20 bg-black/40">
+                    <div className="bg-slate-800 border border-slate-700 rounded-lg shadow-xl w-full max-w-md p-4">
+                        <div className="flex items-center justify-between mb-3">
+                            <h2 className="text-sm font-semibold text-slate-100">
+                                Saved floor plans
+                            </h2>
+                            <button
+                                type="button"
+                                onClick={() => setIsLoadPickerOpen(false)}
+                                className="text-slate-400 hover:text-slate-200 text-sm"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {isLoadingList ? (
+                            <p className="text-slate-400 text-sm">Loading floor plans...</p>
+                        ) : availablePlans.length === 0 ? (
+                            <p className="text-slate-500 text-sm">
+                                {loadError || 'No saved floor plans found.'}
+                            </p>
+                        ) : (
+                            <ul className="space-y-1 max-h-64 overflow-y-auto">
+                                {availablePlans.map((plan) => (
+                                    <li key={plan.id}>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleSelectFloorPlan(plan.id)}
+                                            className="w-full text-left px-3 py-2 rounded-md bg-slate-700 hover:bg-slate-600 transition-colors"
+                                        >
+                                            <div className="text-sm font-medium text-slate-100">
+                                                {plan.name || 'Untitled'}
+                                            </div>
+                                            <div className="text-xs text-slate-400">
+                                                {plan.spaceType} · {plan.elements.length} elements
+                                            </div>
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+
+                        {loadError && availablePlans.length > 0 && (
+                            <p className="text-xs text-red-400 mt-2">{loadError}</p>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* Main Content */}
             <div className="flex-1 flex">
