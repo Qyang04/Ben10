@@ -262,6 +262,15 @@ function PropertiesPanel() {
         });
     };
 
+    const radToDeg = (rad: number) => (rad * 180) / Math.PI;
+    const degToRad = (deg: number) => (deg * Math.PI) / 180;
+    const wrapDeg360 = (deg: number) => {
+        const d = ((deg % 360) + 360) % 360;
+        return d === 0 && deg !== 0 ? 360 : d;
+    };
+
+    const yawDeg = wrapDeg360(Math.round(radToDeg(selectedElement.rotation.y)));
+
     return (
         <aside className="w-72 bg-slate-800 border-l border-slate-700 p-4">
             <h2 className="text-sm font-semibold text-slate-400 uppercase mb-4">
@@ -306,6 +315,69 @@ function PropertiesPanel() {
                         />
                     </div>
                 ))}
+            </div>
+
+            {/* Rotation (Yaw) */}
+            <div className="mb-4">
+                <span className="text-xs text-slate-500 block mb-2">Rotation (°)</span>
+                <div className="flex items-center gap-2 mb-2">
+                    <label className="text-slate-400 text-sm w-16">Yaw</label>
+                    <input
+                        type="range"
+                        min={0}
+                        max={360}
+                        step={1}
+                        value={yawDeg}
+                        onChange={(e) => {
+                            const deg = parseFloat(e.target.value);
+                            if (!Number.isFinite(deg)) return;
+                            updateElement(selectedElement.id, {
+                                rotation: { ...selectedElement.rotation, y: degToRad(deg) },
+                            });
+                        }}
+                        className="flex-1"
+                    />
+                    <input
+                        type="number"
+                        min={0}
+                        max={360}
+                        step="1"
+                        value={yawDeg}
+                        onChange={(e) => {
+                            const deg = parseFloat(e.target.value);
+                            if (!Number.isFinite(deg)) return;
+                            const clamped = Math.min(360, Math.max(0, deg));
+                            updateElement(selectedElement.id, {
+                                rotation: { ...selectedElement.rotation, y: degToRad(clamped) },
+                            });
+                        }}
+                        className="w-20 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                    />
+                </div>
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => {
+                            const next = wrapDeg360(yawDeg - 90);
+                            updateElement(selectedElement.id, {
+                                rotation: { ...selectedElement.rotation, y: degToRad(next) },
+                            });
+                        }}
+                        className="flex-1 px-3 py-2 bg-slate-700 rounded-lg text-sm hover:bg-slate-600 transition-colors"
+                    >
+                        -90°
+                    </button>
+                    <button
+                        onClick={() => {
+                            const next = wrapDeg360(yawDeg + 90);
+                            updateElement(selectedElement.id, {
+                                rotation: { ...selectedElement.rotation, y: degToRad(next) },
+                            });
+                        }}
+                        className="flex-1 px-3 py-2 bg-slate-700 rounded-lg text-sm hover:bg-slate-600 transition-colors"
+                    >
+                        +90°
+                    </button>
+                </div>
             </div>
 
             {/* Wall texture picker — only for walls */}

@@ -7,6 +7,7 @@
  * - Uses raycaster + ground plane intersection (inspired by wedding repo)
  * - No gizmo arrows — directly click and drag on the ground plane
  * - Grid snaps in real-time while dragging
+ * - Right-click + scroll wheel rotates element (yaw)
  * 
  * HOW IT WORKS:
  * 1. Click element to select (shows selection ring)
@@ -15,7 +16,7 @@
  * 4. Pointer up → releases capture, commits position to store, re-enables orbit
  */
 
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useFloorPlanStore } from '../../store';
@@ -45,6 +46,7 @@ interface DragState {
 const SNAP_INCREMENT = 0.5; // 0.5m grid
 const SELECTION_RING_COLOR = '#3b82f6'; // Blue ring
 const HOVER_EMISSIVE = 0x1a3a5c; // Subtle blue glow
+const ROTATE_WHEEL_SENSITIVITY = 0.005; // radians per wheel delta unit
 
 export function TransformableElement({
     elementId,
@@ -61,6 +63,10 @@ export function TransformableElement({
         (state) => state.floorPlan?.elements.find((el) => el.id === elementId) ?? null
     );
     const [isHovered, setIsHovered] = useState(false);
+    const [wheelRotateActive, setWheelRotateActive] = useState(false);
+    const [localRotation, setLocalRotation] = useState<[number, number, number]>(rotation);
+    const interactionModeRef = useRef<'none' | 'rotateHold'>('none');
+    const rotationStartRef = useRef<[number, number, number]>(rotation);
 
     // Drag state ref — mutable, no re-renders
     const dragState = useRef<DragState>({
@@ -74,6 +80,17 @@ export function TransformableElement({
 
     // Access the R3F scene internals
     const { gl } = useThree();
+
+    const wrapRadians = useCallback((rad: number) => {
+        const tau = Math.PI * 2;
+        return ((rad % tau) + tau) % tau;
+    }, []);
+
+    // Keep local rotation in sync with store unless actively rotating.
+    useEffect(() => {
+        if (wheelRotateActive) return;
+        setLocalRotation(rotation);
+    }, [rotation, wheelRotateActive]);
 
     /**
      * Commit current visual position to the Zustand store
@@ -90,14 +107,72 @@ export function TransformableElement({
         });
     }, [elementId, updateElement]);
 
+    const commitRotation = useCallback((rot: [number, number, number]) => {
+        updateElement(elementId, {
+            rotation: {
+                x: Number(rot[0].toFixed(6)),
+                y: Number(rot[1].toFixed(6)),
+                z: Number(rot[2].toFixed(6)),
+            },
+        });
+    }, [elementId, updateElement]);
+
+    const handleWheelRotate = useCallback((e: WheelEvent) => {
+        if (!wheelRotateActive) return;
+        e.preventDefault();
+
+        // wheel: deltaY > 0 usually scroll down
+        const delta = -e.deltaY * ROTATE_WHEEL_SENSITIVITY;
+        setLocalRotation((prev) => [prev[0], wrapRadians(prev[1] + delta), prev[2]]);
+    }, [wheelRotateActive, wrapRadians]);
+
+    useEffect(() => {
+        if (!wheelRotateActive) return;
+
+        gl.domElement.addEventListener('wheel', handleWheelRotate, { passive: false });
+        gl.domElement.style.cursor = 'grabbing';
+        return () => {
+            gl.domElement.removeEventListener('wheel', handleWheelRotate as any);
+            gl.domElement.style.cursor = isHovered ? 'grab' : 'auto';
+        };
+    }, [gl, handleWheelRotate, wheelRotateActive, isHovered]);
+
+    const hasRotationChanged = useCallback((a: [number, number, number], b: [number, number, number]) => {
+        const eps = 1e-6;
+        return (
+            Math.abs(a[0] - b[0]) > eps ||
+            Math.abs(a[1] - b[1]) > eps ||
+            Math.abs(a[2] - b[2]) > eps
+        );
+    }, []);
+
     /**
      * POINTER DOWN — start drag
      * 1. If not selected, just select (don't start drag)
      * 2. If selected, begin drag: capture pointer, compute offset from ground
      */
     const handlePointerDown = useCallback(
-        (event: THREE.Event & { stopPropagation: () => void; ray: THREE.Ray; pointerId: number; target: EventTarget }) => {
+        (event: THREE.Event & { stopPropagation: () => void; ray: THREE.Ray; pointerId: number; target: EventTarget; nativeEvent?: PointerEvent; button?: number }) => {
             event.stopPropagation();
+            (event as any).nativeEvent?.preventDefault?.();
+
+            const button = (event as any).button;
+
+            // Right-click OR left-click (hold): grab to rotate with scroll wheel.
+            // Left-click also selects first; if already selected, you can still drag (and wheel-rotate while dragging).
+            if (button === 2 || (button === 0 && !isSelected)) {
+                if (!isSelected) onSelect();
+                interactionModeRef.current = 'rotateHold';
+                rotationStartRef.current = localRotation;
+                setWheelRotateActive(true);
+                onOrbitToggle?.(false);
+                try {
+                    (event.target as Element)?.setPointerCapture?.(event.pointerId);
+                } catch {
+                    // ignore
+                }
+                return;
+            }
 
             // First click selects, second click (while selected) starts drag
             if (!isSelected) {
@@ -133,8 +208,12 @@ export function TransformableElement({
 
             // Set grabbing cursor
             gl.domElement.style.cursor = 'grabbing';
+
+            // Enable wheel-rotate while the element is held (left button drag).
+            rotationStartRef.current = localRotation;
+            setWheelRotateActive(true);
         },
-        [isSelected, onSelect, onOrbitToggle, gl]
+        [isSelected, onSelect, onOrbitToggle, gl, localRotation]
     );
 
     /**
@@ -167,8 +246,30 @@ export function TransformableElement({
      * Release pointer capture, commit position, re-enable orbit
      */
     const handlePointerUp = useCallback(
-        (event: THREE.Event & { stopPropagation: () => void }) => {
+        (event: THREE.Event & { stopPropagation: () => void; target: EventTarget; pointerId?: number; nativeEvent?: PointerEvent }) => {
             event.stopPropagation();
+            (event as any).nativeEvent?.preventDefault?.();
+
+            // Finish rotate-hold mode (right click OR left click while selecting)
+            if (interactionModeRef.current === 'rotateHold') {
+                interactionModeRef.current = 'none';
+                setWheelRotateActive(false);
+
+                // Release pointer capture (best effort)
+                try {
+                    if ((event.target as Element)?.hasPointerCapture?.(event.pointerId as number)) {
+                        (event.target as Element)?.releasePointerCapture?.(event.pointerId as number);
+                    }
+                } catch {
+                    // ignore
+                }
+
+                if (hasRotationChanged(rotationStartRef.current, localRotation)) {
+                    commitRotation(localRotation);
+                }
+                onOrbitToggle?.(true);
+                return;
+            }
 
             const state = dragState.current;
             if (!state.isDragging) return;
@@ -189,13 +290,19 @@ export function TransformableElement({
             // Commit final position to store
             commitPosition();
 
+            // Commit rotation once if wheel was used during hold/drag
+            setWheelRotateActive(false);
+            if (hasRotationChanged(rotationStartRef.current, localRotation)) {
+                commitRotation(localRotation);
+            }
+
             // Re-enable orbit controls
             onOrbitToggle?.(true);
 
             // Reset cursor
             gl.domElement.style.cursor = isHovered ? 'grab' : 'auto';
         },
-        [commitPosition, onOrbitToggle, gl, isHovered]
+        [commitPosition, onOrbitToggle, gl, isHovered, commitRotation, localRotation, hasRotationChanged]
     );
 
     /**
@@ -203,24 +310,25 @@ export function TransformableElement({
      */
     const handlePointerEnter = useCallback(() => {
         setIsHovered(true);
-        if (!dragState.current.isDragging) {
+        if (!dragState.current.isDragging && !wheelRotateActive) {
             gl.domElement.style.cursor = 'grab';
         }
-    }, [gl]);
+    }, [gl, wheelRotateActive]);
 
     const handlePointerLeave = useCallback(() => {
         setIsHovered(false);
-        if (!dragState.current.isDragging) {
+        if (!dragState.current.isDragging && !wheelRotateActive) {
             gl.domElement.style.cursor = 'auto';
         }
-    }, [gl]);
+    }, [gl, wheelRotateActive]);
 
     return (
         <group
             ref={groupRef}
             position={position}
-            rotation={rotation}
+            rotation={localRotation}
             onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
             onPointerDown={handlePointerDown as any}
             onPointerMove={handlePointerMove as any}
             onPointerUp={handlePointerUp as any}
