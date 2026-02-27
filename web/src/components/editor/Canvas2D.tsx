@@ -35,6 +35,7 @@ import {
     pointToLineDistance,
     checkOverlap,
 } from '../../utils/blueprintUtils';
+import { computeRoomPolygonWorld, isElementInsideRoomPolygon } from '../../utils/roomGeometry';
 import type {
     BlueprintPoint,
     BlueprintWall,
@@ -67,6 +68,7 @@ export default function Canvas2D() {
     const walls = useMemo(() => floorPlan?.walls ?? [], [floorPlan?.walls]);
     const doors = useMemo(() => floorPlan?.doors ?? [], [floorPlan?.doors]);
     const windows = useMemo(() => floorPlan?.windows ?? [], [floorPlan?.windows]);
+    const elements = useMemo(() => floorPlan?.elements ?? [], [floorPlan?.elements]);
 
     // Drawing mode
     const [mode, setMode] = useState<DrawingMode>('DRAW');
@@ -122,6 +124,16 @@ export default function Canvas2D() {
             y: Math.round(pos.y / GRID_SIZE) * GRID_SIZE,
         };
     }, [getMousePosition]);
+
+    /** Validate that all existing elements remain inside the room after a blueprint change. */
+    const areElementsInsideRoom = useCallback((
+        candidatePoints: BlueprintPoint[],
+        candidateWalls: BlueprintWall[],
+    ): boolean => {
+        if (!elements.length) return true;
+        const polygon = computeRoomPolygonWorld(candidatePoints, candidateWalls);
+        return elements.every((el) => isElementInsideRoomPolygon(el, polygon));
+    }, [elements]);
 
     /** Commit current blueprint data to the store */
     const commitToStore = useCallback((
@@ -252,6 +264,7 @@ export default function Canvas2D() {
                 const updatedPoints = points.map((p) =>
                     p.id === draggingPointId ? { ...p, x: snapped.x, y: snapped.y } : p,
                 );
+                if (!areElementsInsideRoom(updatedPoints, walls)) return;
                 commitToStore(updatedPoints, walls, doors, windows, false);
             } else if (draggingWallId && lastMousePos) {
                 const dx = snapped.x - lastMousePos.x;
@@ -269,6 +282,7 @@ export default function Canvas2D() {
                             }
                             return p;
                         });
+                        if (!areElementsInsideRoom(updatedPoints, walls)) return;
                         commitToStore(updatedPoints, walls, doors, windows, false);
                         setLastMousePos(snapped);
                     }

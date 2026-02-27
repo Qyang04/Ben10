@@ -1,5 +1,5 @@
 import { PIXELS_PER_METER } from '../constants/blueprintConstants';
-import type { BlueprintPoint, BlueprintWall } from '../types';
+import type { BlueprintPoint, BlueprintWall, Element as FloorElement } from '../types';
 
 export type RoomPolygon = [number, number][];
 
@@ -93,4 +93,50 @@ export function isPointInRoomPolygon(
     }
     return inside;
 }
+
+/**
+ * Check whether an element's footprint (center + corners) stays inside
+ * the given room polygon. Expects:
+ * - element.position.{x,z} in world meters
+ * - element.rotation.y as yaw in radians
+ * - element.dimensions.{width,depth} in meters
+ *
+ * If polygon is null/degenerate or element has no dimensions, this
+ * returns true (no constraint).
+ */
+export function isElementInsideRoomPolygon(
+    element: FloorElement,
+    polygon: RoomPolygon | null,
+): boolean {
+    if (!polygon || polygon.length < 3) return true;
+    if (!element.dimensions) return true;
+
+    const { width, depth } = element.dimensions;
+    const halfW = width / 2;
+    const halfD = depth / 2;
+    const yaw = element.rotation?.y ?? 0;
+    const cos = Math.cos(yaw);
+    const sin = Math.sin(yaw);
+    const x = element.position.x;
+    const z = element.position.z;
+
+    const samplePoints: [number, number][] = [
+        [0, 0], // center
+        [-halfW, -halfD],
+        [halfW, -halfD],
+        [halfW, halfD],
+        [-halfW, halfD],
+    ];
+
+    for (const [lx, lz] of samplePoints) {
+        const wx = x + lx * cos - lz * sin;
+        const wz = z + lx * sin + lz * cos;
+        if (!isPointInRoomPolygon(wx, wz, polygon)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 
