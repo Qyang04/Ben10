@@ -548,7 +548,7 @@ export default function Canvas3D() {
             <div
                 style={{
                     position: 'absolute',
-                    bottom: 16,
+                    bottom: 64, // leave room above Export GLB button
                     left: 16,
                     zIndex: 10,
                     padding: '6px 10px',
@@ -559,9 +559,10 @@ export default function Canvas3D() {
                     fontSize: 11,
                     fontFamily: 'monospace',
                     whiteSpace: 'pre-line',
+                    maxWidth: 320,
                 }}
             >
-                {'Element: hold left/right click + Q/E to rotate\nElement: hold left/right click + W/S to adjust height\nElement: hold left/right click + scroll to adjust width\nWalk mode: click floor to pick start, then click canvas to look around and move with WASD'}
+                {'Element: hold left/right click + Q/E to rotate\nElement: hold left/right click + W/S to adjust height\nElement: hold left/right click + scroll to adjust width'}
             </div>
         </div>
     );
