@@ -391,6 +391,23 @@ export default function Canvas2D() {
         if (mode === 'PAN' || isSpacePressed || e.button === 1 || mode === 'DOOR' || mode === 'WINDOW') return;
         e.stopPropagation();
 
+        // Right-click on a point → delete that point + connected walls/doors/windows
+        if (e.button === 2) {
+            const connectedWallIds = walls
+                .filter((w) => w.startPointId === pointId || w.endPointId === pointId)
+                .map((w) => w.id);
+            commitToStore(
+                points.filter((p) => p.id !== pointId),
+                walls.filter((w) => !connectedWallIds.includes(w.id)),
+                doors.filter((d) => !connectedWallIds.includes(d.wallId)),
+                windows.filter((w) => !connectedWallIds.includes(w.wallId)),
+                true,
+            );
+            if (selectedPointId === pointId) setSelectedPointId(null);
+            if (activeDrawId === pointId) setActiveDrawId(null);
+            return;
+        }
+
         if (mode === 'SELECT') {
             setSelectedWallId(null);
             setSelectedDoorId(null);
@@ -422,7 +439,7 @@ export default function Canvas2D() {
                 setActiveDrawId(pointId);
             }
         }
-    }, [mode, isSpacePressed, activeDrawId, walls, points, doors, windows, commitToStore]);
+    }, [mode, isSpacePressed, walls, points, doors, windows, commitToStore, activeDrawId, selectedPointId]);
 
     const handleWallDown = useCallback((e: React.PointerEvent, wallId: string) => {
         if (mode === 'PAN' || isSpacePressed || e.button === 1 || mode === 'DOOR' || mode === 'WINDOW') return;
@@ -803,12 +820,14 @@ export default function Canvas2D() {
                 background: '#334155', color: '#e2e8f0',
                 padding: '4px 12px', borderRadius: 6, fontSize: 12,
                 fontFamily: 'monospace', pointerEvents: 'none',
+                whiteSpace: 'pre-line',
             }}>
                 {mode === 'DRAW' ? '✏️ Click to draw walls • Click existing point to connect'
                     : mode === 'DOOR' ? '🚪 Hover near a wall and click to place a door'
                         : mode === 'WINDOW' ? '🪟 Hover near a wall and click to place a window'
                             : mode === 'PAN' ? '🤚 Drag to pan • Scroll to zoom'
-                                : mode === 'SELECT' ? '⬆️ Click elements to select • Drag to move'
+                                : mode === 'SELECT'
+                                    ? '⬆️ Click elements to select • Drag to move\nBackspace/Delete to remove'
                                     : ''}
             </div>
 
