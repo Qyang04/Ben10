@@ -7,7 +7,8 @@
  * - Uses raycaster + ground plane intersection (inspired by wedding repo)
  * - No gizmo arrows — directly click and drag on the ground plane
  * - Grid snaps in real-time while dragging
- * - Right/left click + scroll wheel rotates element (yaw)
+ * - Left/right click + Q or E rotates element (yaw, 5° per press)
+ * - Left/right click + scroll wheel adjusts element width
  * - Constrains movement/rotation so elements cannot go beyond room walls
  *
  * HOW IT WORKS:
@@ -49,7 +50,8 @@ interface DragState {
 const SNAP_INCREMENT = 0.5; // 0.5m grid
 const SELECTION_RING_COLOR = '#3b82f6'; // Blue ring
 const HOVER_EMISSIVE = 0x1a3a5c; // Subtle blue glow
-const ROTATE_WHEEL_SENSITIVITY = 0.005; // radians per wheel delta unit
+const ROTATE_KEY_STEP = (5 * Math.PI) / 180; // 5° per key press
+const WIDTH_SCROLL_STEP = 0.1; // 0.1m width change per scroll "tick"
 
 export function TransformableElement({
     elementId,
@@ -66,10 +68,11 @@ export function TransformableElement({
     const element: FloorElement | null =
         floorPlan?.elements.find((el) => el.id === elementId) ?? null;
     const [isHovered, setIsHovered] = useState(false);
-    const [wheelRotateActive, setWheelRotateActive] = useState(false);
     const [localRotation, setLocalRotation] = useState<[number, number, number]>(rotation);
-    const interactionModeRef = useRef<'none' | 'rotateHold'>('none');
-    const rotationStartRef = useRef<[number, number, number]>(rotation);
+    // Tracks whether a mouse button is currently held on this element
+    const rotateKeyActiveRef = useRef(false);
+    // When true, global wheel is captured to adjust width (and prevent page scroll)
+    const [isWidthAdjustActive, setIsWidthAdjustActive] = useState(false);
 
     // Drag state ref — mutable, no re-renders
     const dragState = useRef<DragState>({
@@ -166,11 +169,10 @@ export function TransformableElement({
         [element, roomPolygon, otherElements],
     );
 
-    // Keep local rotation in sync with store unless actively rotating.
+    // Keep local rotation in sync with store.
     useEffect(() => {
-        if (wheelRotateActive) return;
         setLocalRotation(rotation);
-    }, [rotation, wheelRotateActive]);
+    }, [rotation]);
 
     /**
      * Commit current visual position to the Zustand store
@@ -197,40 +199,29 @@ export function TransformableElement({
         });
     }, [elementId, updateElement]);
 
-    const handleWheelRotate = useCallback((e: WheelEvent) => {
-        if (!wheelRotateActive) return;
-        e.preventDefault();
-
-        if (!groupRef.current) return;
-        const { x, z } = groupRef.current.position;
-
-        const delta = -e.deltaY * ROTATE_WHEEL_SENSITIVITY;
-        setLocalRotation((prev) => {
-            const nextYaw = wrapRadians(prev[1] + delta);
-            if (!isPlacementAllowed(x, z, nextYaw)) return prev;
-            return [prev[0], nextYaw, prev[2]];
-        });
-    }, [wheelRotateActive, wrapRadians, isPlacementAllowed]);
-
+    // Keyboard rotation: Q / E while a mouse button is held on the selected element.
     useEffect(() => {
-        if (!wheelRotateActive) return;
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (!isSelected || !rotateKeyActiveRef.current || !groupRef.current) return;
+            const key = e.key.toLowerCase();
+            if (key !== 'q' && key !== 'e') return;
 
-        gl.domElement.addEventListener('wheel', handleWheelRotate, { passive: false });
-        gl.domElement.style.cursor = 'grabbing';
-        return () => {
-            gl.domElement.removeEventListener('wheel', handleWheelRotate as any);
-            gl.domElement.style.cursor = isHovered ? 'grab' : 'auto';
+            e.preventDefault();
+            const { x, z } = groupRef.current.position;
+            const delta = key === 'q' ? -ROTATE_KEY_STEP : ROTATE_KEY_STEP;
+
+            setLocalRotation((prev) => {
+                const nextYaw = wrapRadians(prev[1] + delta);
+                if (!isPlacementAllowed(x, z, nextYaw)) return prev;
+                const next: [number, number, number] = [prev[0], nextYaw, prev[2]];
+                commitRotation(next);
+                return next;
+            });
         };
-    }, [gl, handleWheelRotate, wheelRotateActive, isHovered]);
 
-    const hasRotationChanged = useCallback((a: [number, number, number], b: [number, number, number]) => {
-        const eps = 1e-6;
-        return (
-            Math.abs(a[0] - b[0]) > eps ||
-            Math.abs(a[1] - b[1]) > eps ||
-            Math.abs(a[2] - b[2]) > eps
-        );
-    }, []);
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isSelected, isPlacementAllowed, wrapRadians, commitRotation]);
 
     /**
      * POINTER DOWN — start drag
@@ -242,31 +233,24 @@ export function TransformableElement({
             event.stopPropagation();
             (event as any).nativeEvent?.preventDefault?.();
 
-            const button = (event as any).button;
+            const button = (event as any).button ?? 0;
 
-            // Right-click OR left-click (hold): grab to rotate with scroll wheel.
-            // Left-click also selects first; if already selected, you can still drag (and wheel-rotate while dragging).
-            if (button === 2 || (button === 0 && !isSelected)) {
-                if (!isSelected) onSelect();
-                interactionModeRef.current = 'rotateHold';
-                rotationStartRef.current = localRotation;
-                setWheelRotateActive(true);
-                onOrbitToggle?.(false);
-                try {
-                    (event.target as Element)?.setPointerCapture?.(event.pointerId);
-                } catch {
-                    // ignore
+            // Track that a mouse button is down on this element (for Q/E rotation and width adjust).
+            if (button === 0 || button === 2) {
+                rotateKeyActiveRef.current = true;
+                // Only enable width adjustment when the element is already selected
+                if (isSelected) {
+                    setIsWidthAdjustActive(true);
                 }
-                return;
             }
 
-            // First click selects, second click (while selected) starts drag
+            // First click selects, second left-click (while selected) starts drag.
             if (!isSelected) {
                 onSelect();
                 return;
             }
 
-            if (!groupRef.current) return;
+            if (button !== 0 || !groupRef.current) return;
 
             const state = dragState.current;
 
@@ -294,12 +278,8 @@ export function TransformableElement({
 
             // Set grabbing cursor
             gl.domElement.style.cursor = 'grabbing';
-
-            // Enable wheel-rotate while the element is held (left button drag).
-            rotationStartRef.current = localRotation;
-            setWheelRotateActive(true);
         },
-        [isSelected, onSelect, onOrbitToggle, gl, localRotation]
+        [isSelected, onSelect, onOrbitToggle, gl]
     );
 
     /**
@@ -341,26 +321,9 @@ export function TransformableElement({
             event.stopPropagation();
             (event as any).nativeEvent?.preventDefault?.();
 
-            // Finish rotate-hold mode (right click OR left click while selecting)
-            if (interactionModeRef.current === 'rotateHold') {
-                interactionModeRef.current = 'none';
-                setWheelRotateActive(false);
-
-                // Release pointer capture (best effort)
-                try {
-                    if ((event.target as Element)?.hasPointerCapture?.(event.pointerId as number)) {
-                        (event.target as Element)?.releasePointerCapture?.(event.pointerId as number);
-                    }
-                } catch {
-                    // ignore
-                }
-
-                if (hasRotationChanged(rotationStartRef.current, localRotation)) {
-                    commitRotation(localRotation);
-                }
-                onOrbitToggle?.(true);
-                return;
-            }
+            // Mouse button released → stop Q/E rotation & width adjustment eligibility.
+            rotateKeyActiveRef.current = false;
+            setIsWidthAdjustActive(false);
 
             const state = dragState.current;
             if (!state.isDragging) return;
@@ -381,19 +344,13 @@ export function TransformableElement({
             // Commit final position to store
             commitPosition();
 
-            // Commit rotation once if wheel was used during hold/drag
-            setWheelRotateActive(false);
-            if (hasRotationChanged(rotationStartRef.current, localRotation)) {
-                commitRotation(localRotation);
-            }
-
             // Re-enable orbit controls
             onOrbitToggle?.(true);
 
             // Reset cursor
             gl.domElement.style.cursor = isHovered ? 'grab' : 'auto';
         },
-        [commitPosition, onOrbitToggle, gl, isHovered, commitRotation, localRotation, hasRotationChanged]
+        [commitPosition, onOrbitToggle, gl, isHovered]
     );
 
     /**
@@ -401,17 +358,42 @@ export function TransformableElement({
      */
     const handlePointerEnter = useCallback(() => {
         setIsHovered(true);
-        if (!dragState.current.isDragging && !wheelRotateActive) {
+        if (!dragState.current.isDragging) {
             gl.domElement.style.cursor = 'grab';
         }
-    }, [gl, wheelRotateActive]);
+    }, [gl]);
 
     const handlePointerLeave = useCallback(() => {
         setIsHovered(false);
-        if (!dragState.current.isDragging && !wheelRotateActive) {
+        if (!dragState.current.isDragging) {
             gl.domElement.style.cursor = 'auto';
         }
-    }, [gl, wheelRotateActive]);
+    }, [gl]);
+
+    // Global wheel handler for width adjustment. Attached only while isWidthAdjustActive is true.
+    useEffect(() => {
+        if (!isWidthAdjustActive) return;
+
+        const handleWheel = (e: WheelEvent) => {
+            // Always prevent page scrolling while actively adjusting width.
+            e.preventDefault();
+
+            if (!isSelected || !element || !element.dimensions) return;
+
+            const dir = Math.sign(e.deltaY);
+            if (!dir) return;
+
+            const rawNext = element.dimensions.width - dir * WIDTH_SCROLL_STEP;
+            const nextWidth = Math.max(0.2, Number(rawNext.toFixed(2)));
+
+            updateElement(elementId, {
+                dimensions: { ...element.dimensions, width: nextWidth },
+            });
+        };
+
+        window.addEventListener('wheel', handleWheel, { passive: false });
+        return () => window.removeEventListener('wheel', handleWheel);
+    }, [isWidthAdjustActive, isSelected, element, elementId, updateElement]);
 
     return (
         <group

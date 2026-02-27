@@ -234,6 +234,26 @@ export default function Canvas3D() {
             >
                 {shortWalls ? 'Full-height walls' : 'Short walls view'}
             </button>
+
+            {/* Element manipulation help */}
+            <div
+                style={{
+                    position: 'absolute',
+                    bottom: 16,
+                    left: 16,
+                    zIndex: 10,
+                    padding: '6px 10px',
+                    borderRadius: 8,
+                    background: 'rgba(15,23,42,0.9)',
+                    border: '1px solid #334155',
+                    color: '#cbd5f5',
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                    whiteSpace: 'pre-line',
+                }}
+            >
+                {'Element: hold left/right click + Q/E to rotate\nElement: hold left/right click + scroll to adjust width'}
+            </div>
         </div>
     );
 }
