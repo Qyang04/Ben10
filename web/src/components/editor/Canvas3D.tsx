@@ -23,14 +23,22 @@
  * <Canvas3D />
  */
 
-import { useState, useCallback, useRef } from 'react';
-import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid, Environment, ContactShadows } from '@react-three/drei';
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { Canvas, useThree, useFrame } from '@react-three/fiber';
+import { OrbitControls, Grid, Environment, ContactShadows, PointerLockControls } from '@react-three/drei';
+import * as THREE from 'three';
 import { useFloorPlanStore } from '../../store';
 import { FloorElements } from './FloorElements';
 import { AutoFitCamera } from './AutoFitCamera';
 import { SceneExporter, ExportButtonUI } from './ExportButton';
 import BlueprintWalls3D from '../elements/BlueprintWalls3D';
+import { computeRoomPolygonWorld, isPointInRoomPolygon, type RoomPolygon } from '../../utils/roomGeometry';
+import type { Element as FloorElement } from '../../types';
+
+// Walk-mode collision tuning
+// Very small radius/padding so users can get quite close to elements.
+const WALK_PERSON_RADIUS = 0.08; // effective radius of the walking person (m)
+const WALK_EXTRA_PADDING = 0.01; // extra clearance around elements (m)
 
 /**
  * Scene component containing all 3D objects and helpers
@@ -39,13 +47,115 @@ import BlueprintWalls3D from '../elements/BlueprintWalls3D';
 function Scene({
     onExportReady,
     shortWalls,
+    mode,
+    resetToken,
 }: {
     onExportReady: (fn: (filename: string) => Promise<void>) => void;
     shortWalls: boolean;
+    mode: 'orbit' | 'fps';
+    resetToken: number;
 }) {
+    const { camera, gl } = useThree();
     const floorPlan = useFloorPlanStore((state) => state.floorPlan);
     const selectElement = useFloorPlanStore((state) => state.selectElement);
     const [orbitEnabled, setOrbitEnabled] = useState(true);
+    const [walkStart, setWalkStart] = useState<[number, number] | null>(null);
+    const [walkStarted, setWalkStarted] = useState(false);
+    const [walkPointer, setWalkPointer] = useState<[number, number] | null>(null);
+    const [walkPointerValid, setWalkPointerValid] = useState(true);
+
+    // Room boundary and elements for walk-mode collision checks
+    const roomPolygon: RoomPolygon | null = useMemo(() => {
+        if (!floorPlan) return null;
+        try {
+            return computeRoomPolygonWorld(floorPlan.points, floorPlan.walls);
+        } catch (err) {
+            console.error('Failed to compute room polygon for FPS walk:', err);
+            return null;
+        }
+    }, [floorPlan?.points, floorPlan?.walls]);
+
+    const walkElements: FloorElement[] = useMemo(
+        () => floorPlan?.elements.filter((el) => !!el.dimensions) ?? [],
+        [floorPlan?.elements],
+    );
+
+    // Shared validation: can the walking person stand at (x,z) without intersecting elements or leaving the room?
+    const canStandAt = useCallback(
+        (x: number, z: number): boolean => {
+            if (roomPolygon && !isPointInRoomPolygon(x, z, roomPolygon)) return false;
+
+            for (const el of walkElements) {
+                if (!el.dimensions) continue;
+                const ex = el.position.x;
+                const ez = el.position.z;
+                const elementRadius =
+                    0.5 * Math.sqrt(el.dimensions.width ** 2 + el.dimensions.depth ** 2);
+                const minDist = WALK_PERSON_RADIUS + elementRadius + WALK_EXTRA_PADDING;
+                const dx = x - ex;
+                const dz = z - ez;
+                if (dx * dx + dz * dz < minDist * minDist) {
+                    return false;
+                }
+            }
+
+            return true;
+        },
+        [roomPolygon, walkElements],
+    );
+
+    // Reset camera when walk/orbit mode toggles
+    useEffect(() => {
+        if (mode === 'fps') {
+            // Entering walk mode: top-down view, like 2D map
+            camera.position.set(0, 15, 0.01);
+            camera.lookAt(0, 0, 0);
+        } else {
+            // Exiting walk mode: centered isometric view
+            camera.position.set(10, 10, 10);
+            camera.lookAt(0, 0, 0);
+        }
+    }, [camera, resetToken, mode]);
+
+    // When entering walk mode, reset any previous start and pointer so user always re-chooses.
+    useEffect(() => {
+        if (mode === 'fps') {
+            setWalkStart(null);
+            setWalkStarted(false);
+            setWalkPointer(null);
+            setWalkPointerValid(true);
+        }
+    }, [mode]);
+
+    // Pointer lock handling:
+    // - In FPS mode, a double-click on the canvas will lock the pointer (mouse look).
+    // - When leaving FPS mode, pointer lock is automatically released.
+    useEffect(() => {
+        const canvas = gl?.domElement as HTMLElement | undefined;
+        if (!canvas) return;
+
+        if (mode === 'fps') {
+            const handleDblClick = () => {
+                if (!document.pointerLockElement) {
+                    try {
+                        canvas.requestPointerLock();
+                    } catch {
+                        // ignore
+                    }
+                }
+            };
+            canvas.addEventListener('dblclick', handleDblClick);
+            return () => {
+                canvas.removeEventListener('dblclick', handleDblClick);
+            };
+        } else if (mode === 'orbit' && document.pointerLockElement) {
+            try {
+                document.exitPointerLock();
+            } catch {
+                // ignore
+            }
+        }
+    }, [mode, gl]);
 
     /**
      * Toggle orbit controls on/off
@@ -58,9 +168,137 @@ function Scene({
     /**
      * Click on empty ground → deselect current element
      */
-    const handleGroundClick = useCallback(() => {
-        selectElement(null);
-    }, [selectElement]);
+    const handleGroundClick = useCallback(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (event: any) => {
+            selectElement(null);
+
+            // In walk mode, first click on floor confirms starting position.
+            // Only left-clicks (button === 0) are allowed to choose a start point;
+            // right-clicks remain available for dragging/orbiting.
+            if (mode === 'fps' && !walkStarted && event?.point && event.button === 0) {
+                const { x, z } = event.point;
+                // Reject start positions that are too close to elements or outside the room.
+                if (!canStandAt(x, z)) {
+                    return;
+                }
+                setWalkStart([x, z]);
+                setWalkStarted(true);
+                setWalkPointer(null);
+                setWalkPointerValid(true);
+            }
+        },
+        [selectElement, mode, walkStarted, canStandAt],
+    );
+
+    /**
+     * First-person walk controller — simple WASD movement with collision.
+     * Mouse look is handled by PointerLockControls when mode === 'fps'.
+     */
+    function FirstPersonController({
+        start,
+        polygon,
+        elements,
+    }: {
+        start: [number, number] | null;
+        polygon: RoomPolygon | null;
+        elements: FloorElement[];
+    }) {
+        const { camera } = useThree();
+
+        // Initialize camera position roughly at eye height, looking toward origin.
+        useState(() => {
+            const startX = start?.[0] ?? 0;
+            const startZ =
+                start?.[1] ?? (floorPlan?.dimensions.depth ? floorPlan.dimensions.depth / 2 : 5);
+            camera.position.set(startX, 1.6, startZ);
+            camera.lookAt(startX, 1.2, startZ - 1);
+            return null;
+        });
+
+        const keysRef = useRef<Record<string, boolean>>({});
+
+        const handleKeyDown = useCallback((e: KeyboardEvent) => {
+            keysRef.current[e.code] = true;
+        }, []);
+
+        const handleKeyUp = useCallback((e: KeyboardEvent) => {
+            keysRef.current[e.code] = false;
+        }, []);
+
+        useState(() => {
+            window.addEventListener('keydown', handleKeyDown);
+            window.addEventListener('keyup', handleKeyUp);
+            return () => {
+                window.removeEventListener('keydown', handleKeyDown);
+                window.removeEventListener('keyup', handleKeyUp);
+            };
+        });
+
+        const canMoveTo = (x: number, z: number): boolean => {
+            // Stay inside room polygon if available
+            if (polygon && !isPointInRoomPolygon(x, z, polygon)) return false;
+
+            // Simple circular collision against each element footprint
+            for (const el of elements) {
+                if (!el.dimensions) continue;
+                const ex = el.position.x;
+                const ez = el.position.z;
+                const elementRadius =
+                    0.5 * Math.sqrt(el.dimensions.width ** 2 + el.dimensions.depth ** 2);
+                const minDist = WALK_PERSON_RADIUS + elementRadius + WALK_EXTRA_PADDING;
+                const dx = x - ex;
+                const dz = z - ez;
+                if (dx * dx + dz * dz < minDist * minDist) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
+        useFrame((_, delta) => {
+            const speed = 3; // meters per second
+            const moveDistance = speed * delta;
+
+            const forward = new THREE.Vector3();
+            camera.getWorldDirection(forward);
+            forward.y = 0;
+            forward.normalize();
+
+            const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+            const nextPosition = camera.position.clone();
+
+            if (keysRef.current['KeyW']) {
+                nextPosition.addScaledVector(forward, moveDistance);
+            }
+            if (keysRef.current['KeyS']) {
+                nextPosition.addScaledVector(forward, -moveDistance);
+            }
+            if (keysRef.current['KeyA']) {
+                nextPosition.addScaledVector(right, -moveDistance);
+            }
+            if (keysRef.current['KeyD']) {
+                nextPosition.addScaledVector(right, moveDistance);
+            }
+
+            // Apply horizontal collision constraints
+            if (canMoveTo(nextPosition.x, nextPosition.z)) {
+                camera.position.copy(nextPosition);
+            }
+
+            const rotateSpeed = 1.5; // radians per second
+            if (keysRef.current['ArrowLeft']) {
+                camera.rotation.y += rotateSpeed * delta;
+            }
+            if (keysRef.current['ArrowRight']) {
+                camera.rotation.y -= rotateSpeed * delta;
+            }
+        });
+
+        return null;
+    }
 
     return (
         <>
@@ -123,6 +361,15 @@ function Scene({
                 rotation={[-Math.PI / 2, 0, 0]}
                 position={[0, -0.01, 0]}
                 onClick={handleGroundClick}
+                // Show a red pointer under the mouse when choosing a start position in walk mode
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                onPointerMove={(event: any) => {
+                    if (mode === 'fps' && !walkStarted && event?.point) {
+                        const { x, z } = event.point;
+                        setWalkPointer([x, z]);
+                        setWalkPointerValid(canStandAt(x, z));
+                    }
+                }}
                 receiveShadow
             >
                 <planeGeometry args={[100, 100]} />
@@ -137,8 +384,16 @@ function Scene({
                 />
             </mesh>
 
-            {/* Auto-fit camera to frame elements */}
-            <AutoFitCamera />
+            {/* Walk start pointer (preview) */}
+            {mode === 'fps' && !walkStarted && walkPointer && (
+                <mesh position={[walkPointer[0], 0.05, walkPointer[1]]}>
+                    <cylinderGeometry args={[0.15, 0.0, 0.05, 20]} />
+                    <meshStandardMaterial color={walkPointerValid ? '#22c55e' : '#ef4444'} />
+                </mesh>
+            )}
+
+            {/* Auto-fit camera to frame elements (orbit view only) */}
+            {mode === 'orbit' && <AutoFitCamera />}
 
             {/* Scene exporter — invisible, just provides export function */}
             <SceneExporter onReady={onExportReady} />
@@ -149,16 +404,24 @@ function Scene({
             {/* Palette-placed furniture elements */}
             <FloorElements onOrbitToggle={handleOrbitToggle} />
 
-            {/* Camera controls — disabled during element drag */}
-            <OrbitControls
-                makeDefault
-                enabled={orbitEnabled}
-                minPolarAngle={0}
-                maxPolarAngle={Math.PI / 2.1} // Prevent flipping below floor
-                minDistance={2}
-                maxDistance={50}
-                target={[0, 0, 0]}
-            />
+            {/* Camera controls */}
+            {mode === 'orbit' || !walkStarted || !walkStart ? (
+                <OrbitControls
+                    makeDefault
+                    enabled={orbitEnabled}
+                    minPolarAngle={0}
+                    maxPolarAngle={Math.PI / 2.1} // Prevent flipping below floor
+                    minDistance={2}
+                    maxDistance={50}
+                    target={[0, 0, 0]}
+                />
+            ) : (
+                <>
+                    {/* WASD movement handled by FirstPersonController; mouse look by PointerLockControls */}
+                    <FirstPersonController start={walkStart} polygon={roomPolygon} elements={walkElements} />
+                    <PointerLockControls makeDefault />
+                </>
+            )}
         </>
     );
 }
@@ -173,6 +436,8 @@ export default function Canvas3D() {
     const [exporting, setExporting] = useState(false);
     const exportFnRef = useRef<((filename: string) => Promise<void>) | null>(null);
     const [shortWalls, setShortWalls] = useState(false);
+    const [viewMode3D, setViewMode3D] = useState<'orbit' | 'fps'>('orbit');
+    const [cameraResetToken, setCameraResetToken] = useState(0);
 
     const handleExportReady = useCallback((fn: (filename: string) => Promise<void>) => {
         exportFnRef.current = fn;
@@ -207,7 +472,12 @@ export default function Canvas3D() {
                 }}
                 style={{ background: '#0f172a' }} // Dark blue background
             >
-                <Scene onExportReady={handleExportReady} shortWalls={shortWalls} />
+                <Scene
+                    onExportReady={handleExportReady}
+                    shortWalls={shortWalls}
+                    mode={viewMode3D}
+                    resetToken={cameraResetToken}
+                />
             </Canvas>
 
             {/* Export button — rendered as DOM overlay, NOT inside the 3D scene */}
@@ -235,6 +505,45 @@ export default function Canvas3D() {
                 {shortWalls ? 'Full-height walls' : 'Short walls view'}
             </button>
 
+            {/* 3D view mode toggle: Orbit vs FPS walk */}
+            <button
+                type="button"
+                onClick={() => {
+                    setViewMode3D((prev) => {
+                        const next = prev === 'orbit' ? 'fps' : 'orbit';
+                        // When leaving FPS walk mode, explicitly exit pointer lock
+                        if (prev === 'fps' && next === 'orbit') {
+                            try {
+                                if (document.pointerLockElement) {
+                                    document.exitPointerLock();
+                                }
+                            } catch {
+                                // ignore
+                            }
+                        }
+                        // Always reset camera to centered view when toggling walk/orbit
+                        setCameraResetToken((t) => t + 1);
+                        return next;
+                    });
+                }}
+                style={{
+                    position: 'absolute',
+                    top: 16,
+                    left: 150,
+                    zIndex: 20,
+                    background: viewMode3D === 'fps' ? '#22c55e' : '#334155',
+                    color: 'white',
+                    border: '1px solid #475569',
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    fontWeight: 500,
+                }}
+            >
+                {viewMode3D === 'fps' ? 'Exit walk mode' : 'Enter walk mode'}
+            </button>
+
             {/* Element manipulation help */}
             <div
                 style={{
@@ -252,7 +561,7 @@ export default function Canvas3D() {
                     whiteSpace: 'pre-line',
                 }}
             >
-                {'Element: hold left/right click + Q/E to rotate\nElement: hold left/right click + W/S to adjust height\nElement: hold left/right click + scroll to adjust width'}
+                {'Element: hold left/right click + Q/E to rotate\nElement: hold left/right click + W/S to adjust height\nElement: hold left/right click + scroll to adjust width\nWalk mode: click floor to pick start, then click canvas to look around and move with WASD'}
             </div>
         </div>
     );
