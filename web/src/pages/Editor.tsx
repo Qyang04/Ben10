@@ -174,22 +174,107 @@ const ELEMENT_LABELS: Partial<Record<PaletteElementType, string>> = {
     fire_extinguisher: 'Fire Extinguisher',
 };
 
+const PLACEMENT_GRID_STEP = 0.5;
+const PLACEMENT_CLEARANCE = 0.05;
+
+/**
+ * Find a non-overlapping position for a new element inside the room and away from others.
+ * Returns null if no valid position exists.
+ */
+function findNonOverlappingPosition(
+    template: Omit<Element, 'id'>,
+    roomPolygon: ReturnType<typeof computeRoomPolygonWorld>,
+    otherElements: Element[],
+): { x: number; z: number } | null {
+    const dims = template.dimensions;
+    if (!dims) return { x: 0, z: 0 };
+
+    const selfRadius = 0.5 * Math.sqrt(dims.width ** 2 + dims.depth ** 2) + PLACEMENT_CLEARANCE;
+
+    // Search bounds: room polygon bbox, or default [-4,4] if no room
+    let minX = -4;
+    let maxX = 4;
+    let minZ = -4;
+    let maxZ = 4;
+    if (roomPolygon && roomPolygon.length >= 3) {
+        const xs = roomPolygon.map((p) => p[0]);
+        const zs = roomPolygon.map((p) => p[1]);
+        const rMinX = Math.min(...xs) + dims.width / 2;
+        const rMaxX = Math.max(...xs) - dims.width / 2;
+        const rMinZ = Math.min(...zs) + dims.depth / 2;
+        const rMaxZ = Math.max(...zs) - dims.depth / 2;
+        if (rMinX <= rMaxX && rMinZ <= rMaxZ) {
+            minX = rMinX;
+            maxX = rMaxX;
+            minZ = rMinZ;
+            maxZ = rMaxZ;
+        }
+    }
+
+    const candidates: [number, number][] = [];
+    for (let x = minX; x <= maxX; x += PLACEMENT_GRID_STEP) {
+        for (let z = minZ; z <= maxZ; z += PLACEMENT_GRID_STEP) {
+            candidates.push([x, z]);
+        }
+    }
+    // Shuffle to avoid always placing at the same corner
+    for (let i = candidates.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+
+    const candidate: Element = {
+        ...template,
+        id: '',
+        position: { x: 0, y: 0, z: 0 },
+    };
+
+    for (const [x, z] of candidates) {
+        candidate.position = { x, y: 0, z };
+        if (roomPolygon && roomPolygon.length >= 3 && !isElementInsideRoomPolygon(candidate, roomPolygon)) continue;
+
+        let overlaps = false;
+        for (const other of otherElements) {
+            if (!other.dimensions) continue;
+            const otherRadius = 0.5 * Math.sqrt(other.dimensions.width ** 2 + other.dimensions.depth ** 2) + PLACEMENT_CLEARANCE;
+            const dx = x - other.position.x;
+            const dz = z - other.position.z;
+            const distSq = dx * dx + dz * dz;
+            if (distSq < (selfRadius + otherRadius) ** 2) {
+                overlaps = true;
+                break;
+            }
+        }
+        if (!overlaps) return { x, z };
+    }
+
+    return null;
+}
+
 /**
  * Element Palette - Left sidebar for adding elements
  */
 function ElementPalette() {
     const addElement = useFloorPlanStore((state) => state.addElement);
+    const floorPlan = useFloorPlanStore((state) => state.floorPlan);
+    const [placementError, setPlacementError] = useState<string | null>(null);
 
     const handleAddElement = (type: PaletteElementType) => {
+        setPlacementError(null);
         const template = ELEMENT_TEMPLATES[type];
+        const roomPolygon = computeRoomPolygonWorld(floorPlan?.points ?? [], floorPlan?.walls ?? []);
+        const otherElements = floorPlan?.elements ?? [];
+        const pos = findNonOverlappingPosition(template, roomPolygon, otherElements);
+
+        if (!pos) {
+            setPlacementError('No available space. Try moving or removing existing elements first.');
+            return;
+        }
+
         const newElement: Element = {
             ...template,
             id: crypto.randomUUID(),
-            position: {
-                x: Math.random() * 4 - 2,
-                y: 0,
-                z: Math.random() * 4 - 2,
-            },
+            position: { x: pos.x, y: 0, z: pos.z },
         };
         addElement(newElement);
     };
@@ -199,6 +284,11 @@ function ElementPalette() {
             <h2 className="text-sm font-semibold text-slate-400 uppercase mb-4">
                 Elements
             </h2>
+            {placementError && (
+                <div className="mb-3 px-3 py-2 bg-amber-900/50 border border-amber-600/50 rounded-lg text-amber-200 text-sm">
+                    {placementError}
+                </div>
+            )}
             <div className="space-y-4 flex-1">
                 {PALETTE_CATEGORIES.map((cat) => (
                     <div key={cat.label}>
