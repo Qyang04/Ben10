@@ -23,6 +23,7 @@ import { useViewModeStore } from '../store/viewModeStore';
 import { saveFloorPlan, loadFloorPlan, listFloorPlans, deleteFloorPlan } from '../services/floorPlanService';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import { WALL_TEXTURES } from '../components/elements/wallTextures';
+import { computeRoomPolygonWorld, isElementInsideRoomPolygon } from '../utils/roomGeometry';
 import type { Element, FloorPlan } from '../types';
 
 /**
@@ -251,9 +252,14 @@ function PropertiesPanel() {
     }
 
     const handleDimensionChange = (key: 'width' | 'height' | 'depth', value: number) => {
-        updateElement(selectedElement.id, {
-            dimensions: { ...selectedElement.dimensions, [key]: value },
-        });
+        const nextDims = { ...selectedElement.dimensions, [key]: value };
+        // Only constrain footprint-affecting changes.
+        if (key === 'width' || key === 'depth') {
+            const polygon = computeRoomPolygonWorld(floorPlan?.points ?? [], floorPlan?.walls ?? []);
+            const candidate: Element = { ...selectedElement, dimensions: nextDims };
+            if (!isElementInsideRoomPolygon(candidate, polygon)) return;
+        }
+        updateElement(selectedElement.id, { dimensions: nextDims });
     };
 
     const handlePositionChange = (key: 'x' | 'y' | 'z', value: number) => {

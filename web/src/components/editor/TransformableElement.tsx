@@ -171,6 +171,58 @@ export function TransformableElement({
         [element, roomPolygon, otherElements],
     );
 
+    const isPlacementAllowedWithDims = useCallback(
+        (
+            x: number,
+            z: number,
+            yaw: number,
+            dims: { width: number; height: number; depth: number },
+        ): boolean => {
+            // ── 1) Stay inside room polygon (if available) ──────────
+            if (roomPolygon) {
+                const { width, depth } = dims;
+                const halfW = width / 2;
+                const halfD = depth / 2;
+                const cos = Math.cos(yaw);
+                const sin = Math.sin(yaw);
+
+                const samplePoints: [number, number][] = [
+                    [0, 0], // center
+                    [-halfW, -halfD],
+                    [halfW, -halfD],
+                    [halfW, halfD],
+                    [-halfW, halfD],
+                ];
+
+                for (const [lx, lz] of samplePoints) {
+                    const wx = x + lx * cos - lz * sin;
+                    const wz = z + lx * sin + lz * cos;
+                    if (!isPointInRoomPolygon(wx, wz, roomPolygon)) {
+                        return false;
+                    }
+                }
+            }
+
+            // ── 2) Prevent overlap with other elements ──────────────
+            const selfRadius = 0.5 * Math.sqrt(dims.width ** 2 + dims.depth ** 2);
+            for (const other of otherElements) {
+                if (!other.dimensions) continue;
+                const ox = other.position.x;
+                const oz = other.position.z;
+                const otherRadius =
+                    0.5 * Math.sqrt(other.dimensions.width ** 2 + other.dimensions.depth ** 2);
+                const dx = x - ox;
+                const dz = z - oz;
+                const distSq = dx * dx + dz * dz;
+                const minDist = selfRadius + otherRadius;
+                if (distSq < minDist * minDist) return false;
+            }
+
+            return true;
+        },
+        [roomPolygon, otherElements],
+    );
+
     // Keep local rotation in sync with store.
     useEffect(() => {
         setLocalRotation(rotation);
@@ -399,14 +451,18 @@ export function TransformableElement({
             const rawNext = element.dimensions.width - dir * WIDTH_SCROLL_STEP;
             const nextWidth = Math.max(0.2, Number(rawNext.toFixed(2)));
 
-            updateElement(elementId, {
-                dimensions: { ...element.dimensions, width: nextWidth },
-            });
+            const yaw = groupRef.current?.rotation.y ?? element.rotation.y ?? 0;
+            const x = groupRef.current?.position.x ?? element.position.x;
+            const z = groupRef.current?.position.z ?? element.position.z;
+            const nextDims = { ...element.dimensions, width: nextWidth };
+            if (!isPlacementAllowedWithDims(x, z, yaw, nextDims)) return;
+
+            updateElement(elementId, { dimensions: nextDims });
         };
 
         window.addEventListener('wheel', handleWheel, { passive: false });
         return () => window.removeEventListener('wheel', handleWheel);
-    }, [isWidthAdjustActive, isSelected, element, elementId, updateElement]);
+    }, [isWidthAdjustActive, isSelected, element, elementId, updateElement, isPlacementAllowedWithDims]);
 
     return (
         <group
@@ -443,9 +499,16 @@ export function TransformableElement({
                 <DimensionHandles
                     dimensions={element.dimensions}
                     onResize={(dim, value) => {
-                        updateElement(elementId, {
-                            dimensions: { ...element.dimensions, [dim]: value },
-                        });
+                        if (!element.dimensions) return;
+                        const nextDims = { ...element.dimensions, [dim]: value };
+                        // Height changes don't affect footprint; allow freely.
+                        if (dim === 'width' || dim === 'depth') {
+                            const yaw = groupRef.current?.rotation.y ?? element.rotation.y ?? 0;
+                            const x = groupRef.current?.position.x ?? element.position.x;
+                            const z = groupRef.current?.position.z ?? element.position.z;
+                            if (!isPlacementAllowedWithDims(x, z, yaw, nextDims)) return;
+                        }
+                        updateElement(elementId, { dimensions: nextDims });
                     }}
                 />
             )}
