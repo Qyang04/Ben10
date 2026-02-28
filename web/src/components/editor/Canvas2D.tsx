@@ -35,7 +35,11 @@ import {
     pointToLineDistance,
     checkOverlap,
 } from '../../utils/blueprintUtils';
-import { computeRoomPolygonWorld, isElementInsideRoomPolygon } from '../../utils/roomGeometry';
+import {
+    computeRoomPolygonWorld,
+    isElementInsideRoomPolygon,
+    doBlueprintWallsIntersectElements,
+} from '../../utils/roomGeometry';
 import type {
     BlueprintPoint,
     BlueprintWall,
@@ -265,6 +269,7 @@ export default function Canvas2D() {
                     p.id === draggingPointId ? { ...p, x: snapped.x, y: snapped.y } : p,
                 );
                 if (!areElementsInsideRoom(updatedPoints, walls)) return;
+                if (doBlueprintWallsIntersectElements(updatedPoints, walls, elements)) return;
                 commitToStore(updatedPoints, walls, doors, windows, false);
             } else if (draggingWallId && lastMousePos) {
                 const dx = snapped.x - lastMousePos.x;
@@ -283,6 +288,7 @@ export default function Canvas2D() {
                             return p;
                         });
                         if (!areElementsInsideRoom(updatedPoints, walls)) return;
+                        if (doBlueprintWallsIntersectElements(updatedPoints, walls, elements)) return;
                         commitToStore(updatedPoints, walls, doors, windows, false);
                         setLastMousePos(snapped);
                     }
@@ -290,8 +296,8 @@ export default function Canvas2D() {
             }
         }
     }, [isPanning, getMousePosition, getSnappedPosition, mode, zoom, walls, doors, windows, points,
-        getPoint, draggingDoorId, draggingWindowId, draggingPointId, draggingWallId, lastMousePos,
-        commitToStore]);
+        elements, getPoint, draggingDoorId, draggingWindowId, draggingPointId, draggingWallId, lastMousePos,
+        commitToStore, areElementsInsideRoom]);
 
     // ─── Pointer Up ───
 

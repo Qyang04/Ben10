@@ -399,3 +399,73 @@ function segmentsIntersect(
     return false;
 }
 
+/**
+ * Check if any blueprint wall segment intersects any placed element's footprint.
+ * Used when editing walls in 2D to prevent walls from moving through elements.
+ * Points and walls are in blueprint pixel space; elements use world (x,z) meters.
+ */
+export function doBlueprintWallsIntersectElements(
+    points: BlueprintPoint[],
+    walls: BlueprintWall[],
+    elements: FloorElement[],
+): boolean {
+    if (points.length === 0 || walls.length === 0 || elements.length === 0) return false;
+
+    const pointById = new Map(points.map((p) => [p.id, p] as const));
+    const xs = points.map((p) => p.x);
+    const ys = points.map((p) => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const centerX = (minX + maxX) / (2 * PIXELS_PER_METER);
+    const centerZ = (minY + maxY) / (2 * PIXELS_PER_METER);
+
+    const toWorld = (px: number, py: number): [number, number] => [
+        px / PIXELS_PER_METER - centerX,
+        py / PIXELS_PER_METER - centerZ,
+    ];
+
+    for (const wall of walls) {
+        const start = pointById.get(wall.startPointId);
+        const end = pointById.get(wall.endPointId);
+        if (!start || !end) continue;
+
+        const [ax, az] = toWorld(start.x, start.y);
+        const [bx, bz] = toWorld(end.x, end.y);
+
+        for (const el of elements) {
+            if (!el.dimensions) continue;
+            const { width, depth } = el.dimensions;
+            const hw = width / 2;
+            const hd = depth / 2;
+            const yaw = el.rotation?.y ?? 0;
+            const cos = Math.cos(yaw);
+            const sin = Math.sin(yaw);
+            const ex = el.position.x;
+            const ez = el.position.z;
+            const toWorldCorner = (lx: number, lz: number): [number, number] => [
+                ex + lx * cos - lz * sin,
+                ez + lx * sin + lz * cos,
+            ];
+            const c0 = toWorldCorner(-hw, -hd);
+            const c1 = toWorldCorner(hw, -hd);
+            const c2 = toWorldCorner(hw, hd);
+            const c3 = toWorldCorner(-hw, hd);
+            const edges: [[number, number], [number, number]][] = [
+                [c0, c1],
+                [c1, c2],
+                [c2, c3],
+                [c3, c0],
+            ];
+            for (const [[eax, eaz], [ebx, ebz]] of edges) {
+                if (segmentsIntersect(ax, az, bx, bz, eax, eaz, ebx, ebz)) return true;
+            }
+            if (pointInPolygon(ax, az, [c0, c1, c2, c3]) || pointInPolygon(bx, bz, [c0, c1, c2, c3])) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
