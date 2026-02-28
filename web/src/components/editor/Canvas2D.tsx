@@ -469,8 +469,102 @@ export default function Canvas2D() {
             setDraggingWallId(wallId);
             setLastMousePos(snapped);
             (e.target as SVGElement).setPointerCapture(e.pointerId);
+            return;
         }
-    }, [mode, isSpacePressed, getSnappedPosition]);
+        if (mode === 'DRAW') {
+            const wall = walls.find((w) => w.id === wallId);
+            if (!wall) return;
+            const start = getPoint(wall.startPointId);
+            const end = getPoint(wall.endPointId);
+            if (!start || !end) return;
+
+            const mousePos = getSnappedPosition(e);
+            const { x, y, offsetRatio } = pointToLineDistance(
+                mousePos.x, mousePos.y,
+                start.x, start.y,
+                end.x, end.y,
+            );
+
+            const wallLength = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
+            const splitDist = offsetRatio * wallLength;
+
+            const MIN_SPLIT_RATIO = 0.08;
+            const useStart = offsetRatio <= MIN_SPLIT_RATIO;
+            const useEnd = offsetRatio >= 1 - MIN_SPLIT_RATIO;
+
+            let newPoint: BlueprintPoint;
+            let newPoints: BlueprintPoint[];
+            let newWalls: BlueprintWall[];
+            let newDoors = doors;
+            let newWindows = windows;
+
+            if (useStart) {
+                newPoint = start;
+                newPoints = [...points];
+                newWalls = walls;
+            } else if (useEnd) {
+                newPoint = end;
+                newPoints = [...points];
+                newWalls = walls;
+            } else {
+                newPoint = { id: generateId(), x: Math.round(x), y: Math.round(y) };
+                newPoints = [...points, newPoint];
+
+                const wall1: BlueprintWall = {
+                    id: generateId(),
+                    startPointId: wall.startPointId,
+                    endPointId: newPoint.id,
+                    thickness: wall.thickness,
+                    height: wall.height,
+                    texture: wall.texture || 'default',
+                };
+                const wall2: BlueprintWall = {
+                    id: generateId(),
+                    startPointId: newPoint.id,
+                    endPointId: wall.endPointId,
+                    thickness: wall.thickness,
+                    height: wall.height,
+                    texture: wall.texture || 'default',
+                };
+
+                newWalls = walls
+                    .filter((w) => w.id !== wallId)
+                    .concat([wall1, wall2]);
+
+                newDoors = doors.map((d) => {
+                    if (d.wallId !== wallId) return d;
+                    if (d.offset < splitDist) return { ...d, wallId: wall1.id };
+                    return { ...d, wallId: wall2.id, offset: d.offset - splitDist };
+                });
+                newWindows = windows.map((w) => {
+                    if (w.wallId !== wallId) return w;
+                    if (w.offset < splitDist) return { ...w, wallId: wall1.id };
+                    return { ...w, wallId: wall2.id, offset: w.offset - splitDist };
+                });
+            }
+
+            if (activeDrawId && activeDrawId !== newPoint.id) {
+                const exists = newWalls.some((w) =>
+                    (w.startPointId === activeDrawId && w.endPointId === newPoint.id) ||
+                    (w.startPointId === newPoint.id && w.endPointId === activeDrawId),
+                );
+                if (!exists) {
+                    const newWall: BlueprintWall = {
+                        id: generateId(),
+                        startPointId: activeDrawId,
+                        endPointId: newPoint.id,
+                        thickness: DEFAULT_WALL_THICKNESS,
+                        height: DEFAULT_WALL_HEIGHT,
+                        texture: 'default',
+                    };
+                    newWalls = [...newWalls, newWall];
+                }
+            }
+
+            commitToStore(newPoints, newWalls, newDoors, newWindows, true);
+            setActiveDrawId(newPoint.id);
+        }
+    }, [mode, isSpacePressed, getSnappedPosition, getPoint, walls, points, doors, windows, activeDrawId, commitToStore]);
 
     const handleDoorDown = useCallback((e: React.PointerEvent, doorId: string) => {
         if (mode === 'PAN' || isSpacePressed || e.button === 1 || mode === 'DOOR' || mode === 'WINDOW') return;
