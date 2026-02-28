@@ -24,7 +24,12 @@ import { useAnalysisStore } from '../store/analysisStore';
 import { saveFloorPlan, loadFloorPlan, listFloorPlans, deleteFloorPlan } from '../services/floorPlanService';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import { WALL_TEXTURES } from '../components/elements/wallTextures';
-import { computeRoomPolygonWorld, isElementInsideRoomPolygon } from '../utils/roomGeometry';
+import {
+    computeRoomPolygonWorld,
+    isElementInsideRoomPolygon,
+    getWallCollisionSegments,
+    doesElementFootprintIntersectWalls,
+} from '../utils/roomGeometry';
 import type { Element, FloorPlan } from '../types';
 
 /**
@@ -179,11 +184,13 @@ const PLACEMENT_CLEARANCE = 0.05;
 
 /**
  * Find a non-overlapping position for a new element inside the room and away from others.
+ * Element must not cross partition or outer walls (doors are gaps).
  * Returns null if no valid position exists.
  */
 function findNonOverlappingPosition(
     template: Omit<Element, 'id'>,
     roomPolygon: ReturnType<typeof computeRoomPolygonWorld>,
+    wallSegments: ReturnType<typeof getWallCollisionSegments>,
     otherElements: Element[],
 ): { x: number; z: number } | null {
     const dims = template.dimensions;
@@ -229,9 +236,16 @@ function findNonOverlappingPosition(
         position: { x: 0, y: 0, z: 0 },
     };
 
+    const yaw = template.rotation?.y ?? 0;
     for (const [x, z] of candidates) {
         candidate.position = { x, y: 0, z };
         if (roomPolygon && roomPolygon.length >= 3 && !isElementInsideRoomPolygon(candidate, roomPolygon)) continue;
+        if (
+            wallSegments.length > 0 &&
+            doesElementFootprintIntersectWalls(x, z, yaw, dims.width, dims.depth, wallSegments)
+        ) {
+            continue;
+        }
 
         let overlaps = false;
         for (const other of otherElements) {
@@ -263,8 +277,13 @@ function ElementPalette() {
         setPlacementError(null);
         const template = ELEMENT_TEMPLATES[type];
         const roomPolygon = computeRoomPolygonWorld(floorPlan?.points ?? [], floorPlan?.walls ?? []);
+        const wallSegments = getWallCollisionSegments(
+            floorPlan?.points ?? [],
+            floorPlan?.walls ?? [],
+            floorPlan?.doors ?? [],
+        );
         const otherElements = floorPlan?.elements ?? [];
-        const pos = findNonOverlappingPosition(template, roomPolygon, otherElements);
+        const pos = findNonOverlappingPosition(template, roomPolygon, wallSegments, otherElements);
 
         if (!pos) {
             setPlacementError('No available space. Try moving or removing existing elements first.');
@@ -361,11 +380,57 @@ function PropertiesPanel() {
             const polygon = computeRoomPolygonWorld(floorPlan?.points ?? [], floorPlan?.walls ?? []);
             const candidate: Element = { ...selectedElement, dimensions: nextDims };
             if (!isElementInsideRoomPolygon(candidate, polygon)) return;
+            const wallSegments = getWallCollisionSegments(
+                floorPlan?.points ?? [],
+                floorPlan?.walls ?? [],
+                floorPlan?.doors ?? [],
+            );
+            if (
+                wallSegments.length > 0 &&
+                doesElementFootprintIntersectWalls(
+                    selectedElement.position.x,
+                    selectedElement.position.z,
+                    selectedElement.rotation?.y ?? 0,
+                    nextDims.width,
+                    nextDims.depth,
+                    wallSegments,
+                )
+            ) {
+                return;
+            }
         }
         updateElement(selectedElement.id, { dimensions: nextDims });
     };
 
     const handlePositionChange = (key: 'x' | 'y' | 'z', value: number) => {
+        if (key === 'x' || key === 'z') {
+            const nextPos = { ...selectedElement.position, [key]: value };
+            const polygon = computeRoomPolygonWorld(floorPlan?.points ?? [], floorPlan?.walls ?? []);
+            const candidate: Element = { ...selectedElement, position: nextPos };
+            if (polygon && polygon.length >= 3 && !isElementInsideRoomPolygon(candidate, polygon)) {
+                return;
+            }
+            const wallSegments = getWallCollisionSegments(
+                floorPlan?.points ?? [],
+                floorPlan?.walls ?? [],
+                floorPlan?.doors ?? [],
+            );
+            const dims = selectedElement.dimensions;
+            if (
+                dims &&
+                wallSegments.length > 0 &&
+                doesElementFootprintIntersectWalls(
+                    nextPos.x,
+                    nextPos.z,
+                    selectedElement.rotation?.y ?? 0,
+                    dims.width,
+                    dims.depth,
+                    wallSegments,
+                )
+            ) {
+                return;
+            }
+        }
         updateElement(selectedElement.id, {
             position: { ...selectedElement.position, [key]: value },
         });

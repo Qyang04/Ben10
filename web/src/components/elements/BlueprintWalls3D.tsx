@@ -118,9 +118,12 @@ const ComplexWallMesh = React.memo(function ComplexWallMesh({
         let currentPos = 0;
 
         for (const op of openings) {
-            const opStart = (op.offset - op.width / 2) / PIXELS_PER_METER;
-            const opEnd = (op.offset + op.width / 2) / PIXELS_PER_METER;
-            const opWidth = op.width / PIXELS_PER_METER;
+            // Clamp opening to wall length so partition wall never extends beyond the element
+            const opStartRaw = (op.offset - op.width / 2) / PIXELS_PER_METER;
+            const opEndRaw = (op.offset + op.width / 2) / PIXELS_PER_METER;
+            const opStart = Math.max(0, Math.min(len, opStartRaw));
+            const opEnd = Math.max(opStart, Math.min(len, opEndRaw));
+            const opWidth = opEnd - opStart;
 
             // Wall segment before opening
             if (opStart > currentPos) {
@@ -128,7 +131,11 @@ const ComplexWallMesh = React.memo(function ComplexWallMesh({
                 segs.push({ length: segLen, height: h, centerX: currentPos + segLen / 2, centerY: h / 2 });
             }
 
-            // Opening segments
+            // Opening segments (skip if opening clamped to zero width)
+            if (opWidth < 1e-6) {
+                currentPos = opEnd;
+                continue;
+            }
             if (op.type === 'WINDOW') {
                 // Sill below window
                 if (op.elevation > 0) {

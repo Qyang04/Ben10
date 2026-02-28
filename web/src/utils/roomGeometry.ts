@@ -186,8 +186,8 @@ export function getWallCollisionSegments(
 
         const wallDoors = doors.filter((d) => d.wallId === wall.id);
         const openings: { tStart: number; tEnd: number }[] = wallDoors.map((d) => {
-            const dStart = Math.max(0, (d.offset - d.width / 2) / wallLenPx);
-            const dEnd = Math.min(1, (d.offset + d.width / 2) / wallLenPx);
+            const dStart = Math.max(0, Math.min(1, (d.offset - d.width / 2) / wallLenPx));
+            const dEnd = Math.max(dStart, Math.min(1, (d.offset + d.width / 2) / wallLenPx));
             return { tStart: dStart, tEnd: dEnd };
         });
         openings.sort((a, b) => a.tStart - b.tStart);
@@ -212,6 +212,64 @@ export function getWallCollisionSegments(
     }
 
     return segments;
+}
+
+/**
+ * Check if an element's footprint (rotated rectangle) intersects any solid wall segment.
+ * Used to prevent elements from being placed or dragged across partition walls.
+ */
+export function doesElementFootprintIntersectWalls(
+    x: number,
+    z: number,
+    yaw: number,
+    width: number,
+    depth: number,
+    wallSegments: WallCollisionSegment[],
+): boolean {
+    const hw = width / 2;
+    const hd = depth / 2;
+    const cos = Math.cos(yaw);
+    const sin = Math.sin(yaw);
+    const toWorld = (lx: number, lz: number): [number, number] => [
+        x + lx * cos - lz * sin,
+        z + lx * sin + lz * cos,
+    ];
+    const c0 = toWorld(-hw, -hd);
+    const c1 = toWorld(hw, -hd);
+    const c2 = toWorld(hw, hd);
+    const c3 = toWorld(-hw, hd);
+    const edges: [[number, number], [number, number]][] = [
+        [c0, c1],
+        [c1, c2],
+        [c2, c3],
+        [c3, c0],
+    ];
+    const corners = [c0, c1, c2, c3];
+
+    for (const seg of wallSegments) {
+        for (const [[eax, eaz], [ebx, ebz]] of edges) {
+            if (segmentsIntersect(eax, eaz, ebx, ebz, seg.ax, seg.az, seg.bx, seg.bz)) {
+                return true;
+            }
+        }
+        if (pointInPolygon(seg.ax, seg.az, corners) || pointInPolygon(seg.bx, seg.bz, corners)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function pointInPolygon(px: number, pz: number, polygon: [number, number][]): boolean {
+    let inside = false;
+    const n = polygon.length;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+        const [xi, zi] = polygon[i];
+        const [xj, zj] = polygon[j];
+        if (zi > pz !== zj > pz && px < ((xj - xi) * (pz - zi)) / (zj - zi + 1e-12) + xi) {
+            inside = !inside;
+        }
+    }
+    return inside;
 }
 
 /**

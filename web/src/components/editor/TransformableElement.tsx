@@ -24,7 +24,13 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useFloorPlanStore } from '../../store';
 import { DimensionHandles } from './DimensionHandles';
-import { computeRoomPolygonWorld, isPointInRoomPolygon, type RoomPolygon } from '../../utils/roomGeometry';
+import {
+    computeRoomPolygonWorld,
+    isPointInRoomPolygon,
+    getWallCollisionSegments,
+    doesElementFootprintIntersectWalls,
+    type RoomPolygon,
+} from '../../utils/roomGeometry';
 import type { Element as FloorElement } from '../../types';
 
 interface TransformableElementProps {
@@ -99,6 +105,12 @@ export function TransformableElement({
         }
     }, [floorPlan?.points, floorPlan?.walls]);
 
+    // Wall collision segments (partition walls + outer walls, doors create gaps)
+    const wallCollisionSegments = useMemo(() => {
+        if (!floorPlan) return [];
+        return getWallCollisionSegments(floorPlan.points, floorPlan.walls, floorPlan.doors);
+    }, [floorPlan?.points, floorPlan?.walls, floorPlan?.doors]);
+
     // Other elements for collision checks (exclude self)
     const otherElements: FloorElement[] = useMemo(
         () =>
@@ -144,7 +156,22 @@ export function TransformableElement({
                 }
             }
 
-            // ── 2) Prevent overlap with other elements ──────────────
+            // ── 2) Cannot cross partition or outer walls (doors are gaps) ──
+            if (
+                wallCollisionSegments.length > 0 &&
+                doesElementFootprintIntersectWalls(
+                    x,
+                    z,
+                    yaw,
+                    dims.width,
+                    dims.depth,
+                    wallCollisionSegments,
+                )
+            ) {
+                return false;
+            }
+
+            // ── 3) Prevent overlap with other elements ──────────────
             // Use AABB overlap with small clearance. Chair-table pairs can be
             // very close (seating), other pairs need a tiny gap to prevent overlap.
             const hw = dims.width / 2;
@@ -174,7 +201,7 @@ export function TransformableElement({
 
             return true;
         },
-        [element, roomPolygon, otherElements],
+        [element, roomPolygon, wallCollisionSegments, otherElements],
     );
 
     const isPlacementAllowedWithDims = useCallback(
@@ -209,7 +236,22 @@ export function TransformableElement({
                 }
             }
 
-            // ── 2) Prevent overlap with other elements ──────────────
+            // ── 2) Cannot cross partition or outer walls (doors are gaps) ──
+            if (
+                wallCollisionSegments.length > 0 &&
+                doesElementFootprintIntersectWalls(
+                    x,
+                    z,
+                    yaw,
+                    dims.width,
+                    dims.depth,
+                    wallCollisionSegments,
+                )
+            ) {
+                return false;
+            }
+
+            // ── 3) Prevent overlap with other elements ──────────────
             const hw = dims.width / 2;
             const hd = dims.depth / 2;
             for (const other of otherElements) {
@@ -229,7 +271,7 @@ export function TransformableElement({
 
             return true;
         },
-        [roomPolygon, otherElements],
+        [roomPolygon, wallCollisionSegments, otherElements],
     );
 
     // Keep local rotation in sync with store.
