@@ -50,7 +50,8 @@ export function computeRoomPolygonWorld(
     const pathPoints = path
         .map((id) => points.find((p) => p.id === id))
         .filter((p): p is BlueprintPoint => !!p);
-    if (pathPoints.length !== path.length) return null;
+    // Need at least 3 points to form a floor polygon (allow pathPoints.length >= 3 even if some IDs didn't match)
+    if (pathPoints.length < 3) return null;
 
     // Compute center in world units (same as BlueprintWalls3D)
     const xs = points.map((p) => p.x);

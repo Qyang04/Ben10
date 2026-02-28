@@ -16,11 +16,7 @@
 import React, { useMemo } from 'react';
 import * as THREE from 'three';
 import { useFloorPlanStore } from '../../store';
-import {
-    PIXELS_PER_METER,
-    DEFAULT_WALL_HEIGHT,
-    WALL_TEXTURES,
-} from '../../constants/blueprintConstants';
+import { PIXELS_PER_METER, DEFAULT_WALL_HEIGHT, WALL_TEXTURES } from '../../constants/blueprintConstants';
 import type {
     BlueprintPoint,
     BlueprintWall,
@@ -221,74 +217,79 @@ const WindowGlass = React.memo(function WindowGlass({ window: win, start, end }:
 });
 
 // ─── Floor Mesh ────────────────────────────────────────────────────
-
-function useRoomShape(
+// Build a simple floor polygon from the wall endpoints.
+// We:
+// 1. Collect all points that are used by at least one wall
+// 2. Convert them to blueprint meters (x = px / PIXELS_PER_METER)
+// 3. Sort them around their centroid to get a stable polygon
+// This is robust across plans (including after "New") and does not depend
+// on any particular wall traversal order.
+function buildFloorShapeFromOutline(
     points: BlueprintPoint[],
     walls: BlueprintWall[],
 ): THREE.Shape | null {
-    return useMemo(() => {
-        if (walls.length < 3) return null;
+    if (points.length === 0 || walls.length < 3) return null;
 
-        // Build adjacency map
-        const adj = new Map<string, string[]>();
-        for (const w of walls) {
-            if (!adj.has(w.startPointId)) adj.set(w.startPointId, []);
-            if (!adj.has(w.endPointId)) adj.set(w.endPointId, []);
-            adj.get(w.startPointId)!.push(w.endPointId);
-            adj.get(w.endPointId)!.push(w.startPointId);
-        }
+    // Only consider points that are actually used by walls
+    const usedPointIds = new Set<string>();
+    for (const w of walls) {
+        usedPointIds.add(w.startPointId);
+        usedPointIds.add(w.endPointId);
+    }
+    const usedPoints = points.filter((p) => usedPointIds.has(p.id));
+    if (usedPoints.length < 3) return null;
 
-        const startNodeId = Array.from(adj.keys()).find((k) => (adj.get(k)?.length ?? 0) >= 2);
-        if (!startNodeId) return null;
+    // Convert to meters in blueprint-local space
+    const pts = usedPoints.map((p) => ({
+        x: p.x / PIXELS_PER_METER,
+        z: p.y / PIXELS_PER_METER,
+    }));
 
-        // Trace path
-        const path = [startNodeId];
-        const visited = new Set([startNodeId]);
-        let curr = startNodeId;
-        let prev: string | null = null;
+    // Centroid
+    const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
+    const cz = pts.reduce((sum, p) => sum + p.z, 0) / pts.length;
 
-        for (let i = 0; i < points.length * 2; i++) {
-            const neighbors = adj.get(curr);
-            if (!neighbors) break;
-            const next = neighbors.find((n) => n !== prev);
-            if (next === startNodeId && path.length > 2) break;
-            if (next && !visited.has(next)) {
-                visited.add(next);
-                path.push(next);
-                prev = curr;
-                curr = next;
-            } else break;
-        }
+    // Sort around centroid for a consistent polygon
+    const sorted = [...pts].sort((a, b) => {
+        const angA = Math.atan2(a.z - cz, a.x - cx);
+        const angB = Math.atan2(b.z - cz, b.x - cx);
+        return angA - angB;
+    });
 
-        if (path.length < 3) return null;
-
-        const pathPoints = path
-            .map((id) => points.find((p) => p.id === id))
-            .filter((p): p is BlueprintPoint => !!p);
-        if (pathPoints.length !== path.length) return null;
-
-        const shape = new THREE.Shape();
-        shape.moveTo(pathPoints[0].x / PIXELS_PER_METER, -pathPoints[0].y / PIXELS_PER_METER);
-        for (let i = 1; i < pathPoints.length; i++) {
-            shape.lineTo(pathPoints[i].x / PIXELS_PER_METER, -pathPoints[i].y / PIXELS_PER_METER);
-        }
-        shape.closePath();
-        return shape;
-    }, [points, walls]);
+    const shape = new THREE.Shape();
+    shape.moveTo(sorted[0].x, -sorted[0].z);
+    for (let i = 1; i < sorted.length; i++) {
+        shape.lineTo(sorted[i].x, -sorted[i].z);
+    }
+    shape.closePath();
+    return shape;
 }
 
-const FloorMesh = React.memo(function FloorMesh({
-    points, walls,
-}: { points: BlueprintPoint[]; walls: BlueprintWall[] }) {
-    const shape = useRoomShape(points, walls);
+function FloorMesh({
+    points,
+    walls,
+    floorKey,
+}: {
+    points: BlueprintPoint[];
+    walls: BlueprintWall[];
+    floorKey: string;
+}) {
+    const shape = useMemo(() => {
+        return buildFloorShapeFromOutline(points, walls);
+    }, [points, walls]);
     if (!shape) return null;
     return (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} receiveShadow>
+        <mesh
+            key={floorKey}
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[0, 0.01, 0]}
+            receiveShadow
+        >
             <shapeGeometry args={[shape]} />
             <meshStandardMaterial color="#1e293b" side={THREE.DoubleSide} />
         </mesh>
     );
-});
+}
 
 // ─── Corner Posts ──────────────────────────────────────────────────
 
@@ -364,7 +365,10 @@ export default function BlueprintWalls3D({ shortWalls = false }: BlueprintWalls3
         ] as const;
     }, [points]);
 
-    if (walls.length === 0) return null;
+    // Always render the group when we have a floor plan so the tree is stable after "New".
+    // Returning null when walls.length === 0 and then content when walls exist could prevent
+    // the floor from appearing on the next plan (R3F/React reuse).
+    if (!floorPlan) return null;
 
     // When shortWalls is true, clamp visual wall and corner-post heights
     const wallHeightScale = shortWalls ? Math.min(WALL_VIEW_MAX_HEIGHT / DEFAULT_WALL_HEIGHT, 1) : 1;
@@ -405,8 +409,12 @@ export default function BlueprintWalls3D({ shortWalls = false }: BlueprintWalls3
                 );
             })}
 
-            {/* Floor Mesh */}
-            <FloorMesh points={points} walls={walls} />
+            {/* Floor Mesh — key by outline so geometry is recreated when plan or walls change */}
+            <FloorMesh
+                points={points}
+                walls={walls}
+                floorKey={`${floorPlan?.id ?? ''}-${points.map((p) => p.id).sort().join(',')}`}
+            />
         </group>
     );
 }

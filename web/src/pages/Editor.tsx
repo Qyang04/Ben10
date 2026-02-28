@@ -20,7 +20,7 @@ import { Canvas3D } from '../components/editor';
 import Canvas2D from '../components/editor/Canvas2D';
 import { useFloorPlanStore } from '../store';
 import { useViewModeStore } from '../store/viewModeStore';
-import { saveFloorPlan, loadFloorPlan, listFloorPlans } from '../services/floorPlanService';
+import { saveFloorPlan, loadFloorPlan, listFloorPlans, deleteFloorPlan } from '../services/floorPlanService';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import { WALL_TEXTURES } from '../components/elements/wallTextures';
 import type { Element, FloorPlan } from '../types';
@@ -566,6 +566,21 @@ export default function Editor() {
         setAvailablePlans([]);
     };
 
+    const handleDeletePlan = async (planId: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        try {
+            await deleteFloorPlan(planId);
+            setAvailablePlans((prev) => prev.filter((p) => p.id !== planId));
+            if (floorPlan?.id === planId) {
+                clearFloorPlan();
+                setSaveStatus('idle');
+            }
+        } catch (err) {
+            console.error('Delete floor plan failed:', err);
+            setLoadError('Failed to delete floor plan.');
+        }
+    };
+
     return (
         <div className="min-h-screen bg-slate-900 text-white flex flex-col relative">
             {/* Header */}
@@ -704,11 +719,11 @@ export default function Editor() {
                         ) : (
                             <ul className="space-y-1 max-h-64 overflow-y-auto">
                                 {availablePlans.map((plan) => (
-                                    <li key={plan.id}>
+                                    <li key={plan.id} className="flex items-stretch gap-1">
                                         <button
                                             type="button"
                                             onClick={() => handleSelectFloorPlan(plan.id)}
-                                            className="w-full text-left px-3 py-2 rounded-md bg-slate-700 hover:bg-slate-600 transition-colors"
+                                            className="flex-1 text-left px-3 py-2 rounded-md bg-slate-700 hover:bg-slate-600 transition-colors"
                                         >
                                             <div className="text-sm font-medium text-slate-100">
                                                 {plan.name || 'Untitled'}
@@ -716,6 +731,20 @@ export default function Editor() {
                                             <div className="text-xs text-slate-400">
                                                 {plan.spaceType} · {plan.elements.length} elements
                                             </div>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={(e) => handleDeletePlan(plan.id, e)}
+                                            className="p-2 rounded-md bg-slate-700 hover:bg-red-600/80 text-slate-400 hover:text-white transition-colors shrink-0"
+                                            title="Remove this floor plan"
+                                            aria-label="Remove this floor plan"
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <polyline points="3 6 5 6 21 6" />
+                                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                                <line x1="10" y1="11" x2="10" y2="17" />
+                                                <line x1="14" y1="11" x2="14" y2="17" />
+                                            </svg>
                                         </button>
                                     </li>
                                 ))}

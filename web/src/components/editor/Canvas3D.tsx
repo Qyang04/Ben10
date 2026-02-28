@@ -398,8 +398,8 @@ function Scene({
             {/* Scene exporter — invisible, just provides export function */}
             <SceneExporter onReady={onExportReady} />
 
-            {/* Blueprint walls/doors/windows from 2D drawing */}
-            <BlueprintWalls3D shortWalls={shortWalls} />
+            {/* Blueprint walls/doors/windows from 2D drawing — key by plan id so New gives a fresh mount */}
+            <BlueprintWalls3D key={floorPlan?.id ?? 'no-plan'} shortWalls={shortWalls} />
 
             {/* Palette-placed furniture elements */}
             <FloorElements onOrbitToggle={handleOrbitToggle} />
