@@ -32,7 +32,14 @@ import { FloorElements } from './FloorElements';
 import { AutoFitCamera } from './AutoFitCamera';
 import { SceneExporter, ExportButtonUI } from './ExportButton';
 import BlueprintWalls3D from '../elements/BlueprintWalls3D';
-import { computeRoomPolygonWorld, isPointInRoomPolygon, type RoomPolygon } from '../../utils/roomGeometry';
+import {
+    computeRoomPolygonWorld,
+    isPointInRoomPolygon,
+    getWallCollisionSegments,
+    doesPathCrossWalls,
+    type RoomPolygon,
+    type WallCollisionSegment,
+} from '../../utils/roomGeometry';
 import type { Element as FloorElement } from '../../types';
 
 // Walk-mode collision tuning
@@ -79,6 +86,12 @@ function Scene({
         () => floorPlan?.elements.filter((el) => !!el.dimensions) ?? [],
         [floorPlan?.elements],
     );
+
+    // Wall collision segments for walk mode (walls block, doors create gaps)
+    const wallCollisionSegments = useMemo(() => {
+        if (!floorPlan) return [];
+        return getWallCollisionSegments(floorPlan.points, floorPlan.walls, floorPlan.doors);
+    }, [floorPlan?.points, floorPlan?.walls, floorPlan?.doors]);
 
     // Shared validation: can the walking person stand at (x,z) without intersecting elements or leaving the room?
     const canStandAt = useCallback(
@@ -199,10 +212,12 @@ function Scene({
         start,
         polygon,
         elements,
+        wallSegments,
     }: {
         start: [number, number] | null;
         polygon: RoomPolygon | null;
         elements: FloorElement[];
+        wallSegments: WallCollisionSegment[];
     }) {
         const { camera } = useThree();
 
@@ -238,6 +253,14 @@ function Scene({
         const canMoveTo = (x: number, z: number): boolean => {
             // Stay inside room polygon if available
             if (polygon && !isPointInRoomPolygon(x, z, polygon)) return false;
+
+            // Block walking through walls (doors create gaps)
+            if (
+                wallSegments.length > 0 &&
+                doesPathCrossWalls(camera.position.x, camera.position.z, x, z, wallSegments)
+            ) {
+                return false;
+            }
 
             // Simple circular collision against each element footprint
             for (const el of elements) {
@@ -418,7 +441,12 @@ function Scene({
             ) : (
                 <>
                     {/* WASD movement handled by FirstPersonController; mouse look by PointerLockControls */}
-                    <FirstPersonController start={walkStart} polygon={roomPolygon} elements={walkElements} />
+                    <FirstPersonController
+                        start={walkStart}
+                        polygon={roomPolygon}
+                        elements={walkElements}
+                        wallSegments={wallCollisionSegments}
+                    />
                     <PointerLockControls makeDefault />
                 </>
             )}
