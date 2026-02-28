@@ -15,11 +15,12 @@
  */
 
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Canvas3D } from '../components/editor';
 import Canvas2D from '../components/editor/Canvas2D';
 import { useFloorPlanStore } from '../store';
 import { useViewModeStore } from '../store/viewModeStore';
+import { useAnalysisStore } from '../store/analysisStore';
 import { saveFloorPlan, loadFloorPlan, listFloorPlans, deleteFloorPlan } from '../services/floorPlanService';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 import { WALL_TEXTURES } from '../components/elements/wallTextures';
@@ -420,6 +421,39 @@ function PropertiesPanel() {
 }
 
 /**
+ * Analyze Button — runs analysis then navigates to results
+ */
+function AnalyzeButton() {
+    const floorPlan = useFloorPlanStore((state) => state.floorPlan);
+    const runAnalysis = useAnalysisStore((s) => s.runAnalysis);
+    const result = useAnalysisStore((s) => s.result);
+    const navigate = useNavigate();
+
+    const handleAnalyze = () => {
+        if (floorPlan) {
+            runAnalysis(floorPlan);
+            navigate('/analysis');
+        }
+    };
+
+    const issueCount = result?.issues.length ?? 0;
+
+    return (
+        <button
+            onClick={handleAnalyze}
+            className="px-4 py-2 bg-blue-500 rounded-lg hover:bg-blue-400 transition-colors relative"
+        >
+            Analyze
+            {issueCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+                    {issueCount}
+                </span>
+            )}
+        </button>
+    );
+}
+
+/**
  * Main Editor Page Component
  */
 export default function Editor() {
@@ -690,12 +724,7 @@ export default function Editor() {
                     >
                         {isSaving ? 'Saving...' : 'Save'}
                     </button>
-                    <Link
-                        to="/analysis"
-                        className="px-4 py-2 bg-blue-500 rounded-lg hover:bg-blue-400 transition-colors"
-                    >
-                        Analyze
-                    </Link>
+                    <AnalyzeButton />
                 </div>
             </header>
 
