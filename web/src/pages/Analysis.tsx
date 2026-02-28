@@ -12,6 +12,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useFloorPlanStore } from '../store';
 import { useAnalysisStore } from '../store/analysisStore';
 import type { Issue, RuleCategory, Severity, AIChange } from '../types';
+import { generateAccessibilityReport } from '../services/pdfReport';
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -466,6 +467,11 @@ export default function Analysis() {
     const runAnalysis = useAnalysisStore((s) => s.runAnalysis);
     const navigate = useNavigate();
 
+    const handleExportPDF = useCallback(() => {
+        if (!result) return;
+        generateAccessibilityReport(result, floorPlan?.name ?? 'Floor Plan');
+    }, [result, floorPlan?.name]);
+
     useEffect(() => {
         if (!floorPlan) return;
         const walls = floorPlan.walls ?? [];
@@ -495,6 +501,14 @@ export default function Analysis() {
                             className="px-4 py-2 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors text-sm"
                         >
                             🔄 Re-analyze
+                        </button>
+                    )}
+                    {result && (
+                        <button
+                            onClick={handleExportPDF}
+                            className="px-4 py-2 bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors text-sm font-medium"
+                        >
+                            📄 Export PDF
                         </button>
                     )}
                     <Link to="/editor" className="px-4 py-2 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors">
