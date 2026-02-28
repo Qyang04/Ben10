@@ -280,16 +280,12 @@ function ElementPalette() {
     };
 
     return (
-        <aside className="w-64 bg-slate-800 border-r border-slate-700 p-4 flex flex-col overflow-y-auto">
-            <h2 className="text-sm font-semibold text-slate-400 uppercase mb-4">
-                Elements
-            </h2>
-            {placementError && (
-                <div className="mb-3 px-3 py-2 bg-amber-900/50 border border-amber-600/50 rounded-lg text-amber-200 text-sm">
-                    {placementError}
-                </div>
-            )}
-            <div className="space-y-4 flex-1">
+        <>
+            <aside className="w-64 bg-slate-800 border-r border-slate-700 p-4 flex flex-col overflow-y-auto">
+                <h2 className="text-sm font-semibold text-slate-400 uppercase mb-4">
+                    Elements
+                </h2>
+                <div className="space-y-4 flex-1">
                 {PALETTE_CATEGORIES.map((cat) => (
                     <div key={cat.label}>
                         <h3 className="text-xs font-semibold text-slate-500 uppercase mb-2 tracking-wider">
@@ -313,6 +309,22 @@ function ElementPalette() {
                 Click to add element to scene
             </p>
         </aside>
+
+            {placementError && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+                    <div className="bg-slate-800 border border-amber-500/50 rounded-lg shadow-xl max-w-sm w-full p-5">
+                        <p className="text-amber-200 text-sm mb-4">{placementError}</p>
+                        <button
+                            type="button"
+                            onClick={() => setPlacementError(null)}
+                            className="w-full px-4 py-2 bg-slate-600 hover:bg-slate-500 rounded-lg text-sm font-medium transition-colors"
+                        >
+                            OK
+                        </button>
+                    </div>
+                </div>
+            )}
+        </>
     );
 }
 
@@ -511,35 +523,57 @@ function PropertiesPanel() {
 }
 
 /**
- * Analyze Button — runs analysis then navigates to results
+ * Analyze Button — runs analysis then navigates to results.
+ * Validates: room (walls) and at least one element required.
  */
 function AnalyzeButton() {
     const floorPlan = useFloorPlanStore((state) => state.floorPlan);
     const runAnalysis = useAnalysisStore((s) => s.runAnalysis);
     const result = useAnalysisStore((s) => s.result);
     const navigate = useNavigate();
+    const [analyzeError, setAnalyzeError] = useState<string | null>(null);
 
     const handleAnalyze = () => {
-        if (floorPlan) {
-            runAnalysis(floorPlan);
-            navigate('/analysis');
+        setAnalyzeError(null);
+        if (!floorPlan) return;
+
+        const walls = floorPlan.walls ?? [];
+        const elements = floorPlan.elements ?? [];
+
+        if (walls.length < 3) {
+            setAnalyzeError('Draw a room first (at least 3 walls) before analyzing.');
+            return;
         }
+        if (elements.length === 0) {
+            setAnalyzeError('Add at least one element to the room before analyzing.');
+            return;
+        }
+
+        runAnalysis(floorPlan);
+        navigate('/analysis');
     };
 
     const issueCount = result?.issues.length ?? 0;
 
     return (
-        <button
-            onClick={handleAnalyze}
-            className="px-4 py-2 bg-blue-500 rounded-lg hover:bg-blue-400 transition-colors relative"
-        >
-            Analyze
-            {issueCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
-                    {issueCount}
+        <div className="flex flex-col items-end gap-1">
+            {analyzeError && (
+                <span className="text-xs text-amber-400 max-w-[200px] text-right">
+                    {analyzeError}
                 </span>
             )}
-        </button>
+            <button
+                onClick={handleAnalyze}
+                className="px-4 py-2 bg-blue-500 rounded-lg hover:bg-blue-400 transition-colors relative"
+            >
+                Analyze
+                {issueCount > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+                        {issueCount}
+                    </span>
+                )}
+            </button>
+        </div>
     );
 }
 

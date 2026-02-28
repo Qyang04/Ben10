@@ -464,12 +464,20 @@ export default function Analysis() {
     const result = useAnalysisStore((s) => s.result);
     const isAnalyzing = useAnalysisStore((s) => s.isAnalyzing);
     const runAnalysis = useAnalysisStore((s) => s.runAnalysis);
+    const navigate = useNavigate();
 
     useEffect(() => {
-        if (!result && floorPlan && !isAnalyzing) {
+        if (!floorPlan) return;
+        const walls = floorPlan.walls ?? [];
+        const elements = floorPlan.elements ?? [];
+        if (walls.length < 3 || elements.length === 0) {
+            navigate('/editor', { replace: true });
+            return;
+        }
+        if (!result && !isAnalyzing) {
             runAnalysis(floorPlan);
         }
-    }, [result, floorPlan, isAnalyzing, runAnalysis]);
+    }, [floorPlan, result, isAnalyzing, runAnalysis, navigate]);
 
     return (
         <div className="min-h-screen bg-slate-900 text-white">
