@@ -37,6 +37,7 @@ import {
     isPointInRoomPolygon,
     getWallCollisionSegments,
     doesPathCrossWalls,
+    isPointInWall,
     type RoomPolygon,
     type WallCollisionSegment,
 } from '../../utils/roomGeometry';
@@ -93,10 +94,11 @@ function Scene({
         return getWallCollisionSegments(floorPlan.points, floorPlan.walls, floorPlan.doors);
     }, [floorPlan?.points, floorPlan?.walls, floorPlan?.doors]);
 
-    // Shared validation: can the walking person stand at (x,z) without intersecting elements or leaving the room?
+    // Shared validation: can the walking person stand at (x,z) without intersecting elements, walls, or leaving the room?
     const canStandAt = useCallback(
         (x: number, z: number): boolean => {
             if (roomPolygon && !isPointInRoomPolygon(x, z, roomPolygon)) return false;
+            if (isPointInWall(x, z, wallCollisionSegments, WALK_PERSON_RADIUS)) return false;
 
             for (const el of walkElements) {
                 if (!el.dimensions) continue;
@@ -114,7 +116,7 @@ function Scene({
 
             return true;
         },
-        [roomPolygon, walkElements],
+        [roomPolygon, walkElements, wallCollisionSegments],
     );
 
     // Reset camera when walk/orbit mode toggles
@@ -257,7 +259,7 @@ function Scene({
             // Block walking through walls (doors create gaps)
             if (
                 wallSegments.length > 0 &&
-                doesPathCrossWalls(camera.position.x, camera.position.z, x, z, wallSegments)
+                doesPathCrossWalls(camera.position.x, camera.position.z, x, z, wallSegments, WALK_PERSON_RADIUS)
             ) {
                 return false;
             }

@@ -3,8 +3,8 @@ import type { BlueprintPoint, BlueprintWall, BlueprintDoor, Element as FloorElem
 
 export type RoomPolygon = [number, number][];
 
-/** Solid wall segment in world (x,z) that blocks walk-through. Doors create gaps. */
-export type WallCollisionSegment = { ax: number; az: number; bx: number; bz: number };
+/** Solid wall segment in world (x,z) that blocks walk-through. Doors create gaps. halfWidth = half wall thickness (m). */
+export type WallCollisionSegment = { ax: number; az: number; bx: number; bz: number; halfWidth: number };
 
 /**
  * Compute the outer room polygon in world coordinates (x,z) based on
@@ -192,6 +192,7 @@ export function getWallCollisionSegments(
         });
         openings.sort((a, b) => a.tStart - b.tStart);
 
+        const halfWidth = (wall.thickness / PIXELS_PER_METER) * 0.5;
         let t = 0;
         for (const op of openings) {
             if (op.tStart > t + 1e-6) {
@@ -200,14 +201,14 @@ export function getWallCollisionSegments(
                 const segAz = az + t * (bz - az);
                 const segBx = ax + tEnd * (bx - ax);
                 const segBz = az + tEnd * (bz - az);
-                segments.push({ ax: segAx, az: segAz, bx: segBx, bz: segBz });
+                segments.push({ ax: segAx, az: segAz, bx: segBx, bz: segBz, halfWidth });
             }
             t = Math.max(t, op.tEnd);
         }
         if (t < 1 - 1e-6) {
             const segAx = ax + t * (bx - ax);
             const segAz = az + t * (bz - az);
-            segments.push({ ax: segAx, az: segAz, bx, bz });
+            segments.push({ ax: segAx, az: segAz, bx, bz, halfWidth });
         }
     }
 
@@ -251,6 +252,9 @@ export function doesElementFootprintIntersectWalls(
             if (segmentsIntersect(eax, eaz, ebx, ebz, seg.ax, seg.az, seg.bx, seg.bz)) {
                 return true;
             }
+            if (minDistSegToSeg(eax, eaz, ebx, ebz, seg.ax, seg.az, seg.bx, seg.bz) < seg.halfWidth) {
+                return true;
+            }
         }
         if (pointInPolygon(seg.ax, seg.az, corners) || pointInPolygon(seg.bx, seg.bz, corners)) {
             return true;
@@ -273,7 +277,77 @@ function pointInPolygon(px: number, pz: number, polygon: [number, number][]): bo
 }
 
 /**
+ * Distance from point (px,pz) to segment (ax,az)-(bx,bz).
+ */
+function distPointToSegment(
+    px: number,
+    pz: number,
+    ax: number,
+    az: number,
+    bx: number,
+    bz: number,
+): number {
+    const vx = bx - ax;
+    const vz = bz - az;
+    const lenSq = vx * vx + vz * vz || 1e-20;
+    const u = Math.max(0, Math.min(1, ((px - ax) * vx + (pz - az) * vz) / lenSq));
+    const qx = ax + u * vx;
+    const qz = az + u * vz;
+    return Math.hypot(px - qx, pz - qz);
+}
+
+/**
+ * Min distance from segment (a0,a1) to segment (b0,b1).
+ */
+function minDistSegToSeg(
+    ax0: number, az0: number, ax1: number, az1: number,
+    bx0: number, bz0: number, bx1: number, bz1: number,
+): number {
+    const vx = ax1 - ax0, vz = az1 - az0;
+    const wx = bx1 - bx0, wz = bz1 - bz0;
+    const ux = ax0 - bx0, uz = az0 - bz0;
+    const vv = vx * vx + vz * vz || 1e-20;
+    const ww = wx * wx + wz * wz || 1e-20;
+    const vw = vx * wx + vz * wz;
+    const den = vv * ww - vw * vw;
+    let best = Infinity;
+    if (Math.abs(den) > 1e-12) {
+        const uv = ux * vx + uz * vz, uw = ux * wx + uz * wz;
+        let t = (vw * uw - ww * uv) / den;
+        let s = (vw * uv - vv * uw) / den;
+        t = Math.max(0, Math.min(1, t));
+        s = Math.max(0, Math.min(1, s));
+        const px = ax0 + t * vx, pz = az0 + t * vz;
+        const qx = bx0 + s * wx, qz = bz0 + s * wz;
+        best = Math.hypot(px - qx, pz - qz);
+    }
+    const d1 = distPointToSegment(ax0, az0, bx0, bz0, bx1, bz1);
+    const d2 = distPointToSegment(ax1, az1, bx0, bz0, bx1, bz1);
+    const d3 = distPointToSegment(bx0, bz0, ax0, az0, ax1, az1);
+    const d4 = distPointToSegment(bx1, bz1, ax0, az0, ax1, az1);
+    return Math.min(best, d1, d2, d3, d4);
+}
+
+/**
+ * True if (x,z) is inside any wall (within halfWidth + personRadius of centerline).
+ */
+export function isPointInWall(
+    x: number,
+    z: number,
+    wallSegments: WallCollisionSegment[],
+    personRadius: number = 0.08,
+): boolean {
+    for (const seg of wallSegments) {
+        if (distPointToSegment(x, z, seg.ax, seg.az, seg.bx, seg.bz) < seg.halfWidth + personRadius) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
  * Check if the path from (fromX, fromZ) to (toX, toZ) crosses any solid wall segment.
+ * Uses wall thickness: blocks when path comes within (halfWidth + personRadius) of wall centerline.
  */
 export function doesPathCrossWalls(
     fromX: number,
@@ -281,11 +355,16 @@ export function doesPathCrossWalls(
     toX: number,
     toZ: number,
     wallSegments: WallCollisionSegment[],
+    personRadius: number = 0.08,
 ): boolean {
     for (const seg of wallSegments) {
-        if (segmentsIntersect(fromX, fromZ, toX, toZ, seg.ax, seg.az, seg.bx, seg.bz)) {
-            return true;
-        }
+        const r = seg.halfWidth + personRadius;
+        const distFrom = distPointToSegment(fromX, fromZ, seg.ax, seg.az, seg.bx, seg.bz);
+        const distTo = distPointToSegment(toX, toZ, seg.ax, seg.az, seg.bx, seg.bz);
+        const minDist = minDistSegToSeg(fromX, fromZ, toX, toZ, seg.ax, seg.az, seg.bx, seg.bz);
+
+        if (distTo < r) return true; // destination inside wall
+        if (distFrom >= r && minDist < r) return true; // path enters wall (allow escape if already overlapping)
     }
     return false;
 }
