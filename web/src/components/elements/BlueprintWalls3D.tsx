@@ -217,49 +217,180 @@ const WindowGlass = React.memo(function WindowGlass({ window: win, start, end }:
 });
 
 // ─── Floor Mesh ────────────────────────────────────────────────────
-// Build a simple floor polygon from the wall endpoints.
-// We:
-// 1. Collect all points that are used by at least one wall
-// 2. Convert them to blueprint meters (x = px / PIXELS_PER_METER)
-// 3. Sort them around their centroid to get a stable polygon
-// This is robust across plans (including after "New") and does not depend
-// on any particular wall traversal order.
-function buildFloorShapeFromOutline(
+// Build floor polygon by *tracing the wall loop* (more robust than centroid-angle sort).
+// This avoids ordering bugs when two corners have nearly the same polar angle (very small wall angles),
+// which can cause a self-intersecting polygon and a missing floor.
+type XZ = { x: number; z: number };
+
+function toXZ(p: BlueprintPoint): XZ {
+    return { x: p.x / PIXELS_PER_METER, z: p.y / PIXELS_PER_METER };
+}
+
+function signedTurnAngle(prevDir: XZ, nextDir: XZ): number {
+    // Angle from prevDir to nextDir in [-pi, pi], positive = CCW.
+    const cross = prevDir.x * nextDir.z - prevDir.z * nextDir.x;
+    const dot = prevDir.x * nextDir.x + prevDir.z * nextDir.z;
+    return Math.atan2(cross, dot);
+}
+
+function buildFloorShapeFromWalls(
     points: BlueprintPoint[],
     walls: BlueprintWall[],
 ): THREE.Shape | null {
     if (points.length === 0 || walls.length < 3) return null;
 
-    // Only consider points that are actually used by walls
-    const usedPointIds = new Set<string>();
+    const pointById = new Map(points.map((p) => [p.id, p] as const));
+
+    // Build adjacency (undirected) from walls
+    const adj = new Map<string, Set<string>>();
     for (const w of walls) {
-        usedPointIds.add(w.startPointId);
-        usedPointIds.add(w.endPointId);
+        if (!adj.has(w.startPointId)) adj.set(w.startPointId, new Set());
+        if (!adj.has(w.endPointId)) adj.set(w.endPointId, new Set());
+        adj.get(w.startPointId)!.add(w.endPointId);
+        adj.get(w.endPointId)!.add(w.startPointId);
     }
-    const usedPoints = points.filter((p) => usedPointIds.has(p.id));
-    if (usedPoints.length < 3) return null;
 
-    // Convert to meters in blueprint-local space
-    const pts = usedPoints.map((p) => ({
-        x: p.x / PIXELS_PER_METER,
-        z: p.y / PIXELS_PER_METER,
-    }));
+    const nodes = Array.from(adj.keys());
+    if (nodes.length < 3) return null;
 
-    // Centroid
-    const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
-    const cz = pts.reduce((sum, p) => sum + p.z, 0) / pts.length;
+    // Choose a stable start node: min (x, z)
+    let startId = nodes[0];
+    for (const id of nodes) {
+        const a = pointById.get(id);
+        const b = pointById.get(startId);
+        if (!a || !b) continue;
+        if (a.x < b.x || (a.x === b.x && a.y < b.y)) startId = id;
+    }
 
-    // Sort around centroid for a consistent polygon
-    const sorted = [...pts].sort((a, b) => {
-        const angA = Math.atan2(a.z - cz, a.x - cx);
-        const angB = Math.atan2(b.z - cz, b.x - cx);
-        return angA - angB;
-    });
+    const startPtRaw = pointById.get(startId);
+    if (!startPtRaw) return null;
+    const startPt = toXZ(startPtRaw);
+
+    // Pick an initial neighbor to define a direction: smallest angle relative to +X axis.
+    const startNeighbors = Array.from(adj.get(startId) ?? []);
+    if (startNeighbors.length === 0) return null;
+    let nextId = startNeighbors[0];
+    let bestAng = Number.POSITIVE_INFINITY;
+    for (const nid of startNeighbors) {
+        const nptRaw = pointById.get(nid);
+        if (!nptRaw) continue;
+        const npt = toXZ(nptRaw);
+        const dx = npt.x - startPt.x;
+        const dz = npt.z - startPt.z;
+        const ang = Math.atan2(dz, dx); // [-pi, pi]
+        const norm = ang < 0 ? ang + Math.PI * 2 : ang; // [0, 2pi)
+        if (norm < bestAng) {
+            bestAng = norm;
+            nextId = nid;
+        }
+    }
+
+    // Walk the loop by always choosing the most CCW turn from the previous direction.
+    const orderedIds: string[] = [startId];
+    let prevId: string | null = null;
+    let currId: string = startId;
+    let currNextId: string = nextId;
+
+    // Seed previous direction as (curr -> next)
+    let prevDir: XZ = (() => {
+        const a = toXZ(pointById.get(currId)!);
+        const b = toXZ(pointById.get(currNextId)!);
+        return { x: b.x - a.x, z: b.z - a.z };
+    })();
+
+    const visitedEdges = new Set<string>();
+    const edgeKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+
+    for (let i = 0; i < nodes.length + walls.length + 10; i++) {
+        // advance
+        prevId = currId;
+        currId = currNextId;
+        orderedIds.push(currId);
+        visitedEdges.add(edgeKey(prevId, currId));
+
+        if (currId === startId) break;
+
+        const currPtRaw = pointById.get(currId);
+        const prevPtRaw = pointById.get(prevId);
+        if (!currPtRaw || !prevPtRaw) return null;
+        const currPt = toXZ(currPtRaw);
+        const prevPt = toXZ(prevPtRaw);
+        prevDir = { x: currPt.x - prevPt.x, z: currPt.z - prevPt.z };
+
+        const neighbors = Array.from(adj.get(currId) ?? []);
+        if (neighbors.length === 0) return null;
+
+        let bestNeighbor: string | null = null;
+        let bestTurn = -Number.POSITIVE_INFINITY;
+
+        for (const nid of neighbors) {
+            if (nid === prevId) continue;
+            const nptRaw = pointById.get(nid);
+            if (!nptRaw) continue;
+            const npt = toXZ(nptRaw);
+            const candDir = { x: npt.x - currPt.x, z: npt.z - currPt.z };
+            const turn = signedTurnAngle(prevDir, candDir);
+            // Prefer CCW turns; if all are CW, pick the "least CW" (closest to 0).
+            const score = turn >= 0 ? turn : turn + Math.PI * 2;
+            if (score > bestTurn) {
+                bestTurn = score;
+                bestNeighbor = nid;
+            }
+        }
+
+        // If dead-end due to tiny numerical/graph issue, allow going back to start if connected
+        if (!bestNeighbor) {
+            if (neighbors.includes(startId) && orderedIds.length > 3) {
+                currNextId = startId;
+                continue;
+            }
+            return null;
+        }
+
+        // Avoid immediately reusing the same undirected edge if possible
+        if (visitedEdges.has(edgeKey(currId, bestNeighbor)) && neighbors.length > 1) {
+            // pick an alternative neighbor (next-best) that isn't visited
+            let alt: string | null = null;
+            let altScore = -Number.POSITIVE_INFINITY;
+            for (const nid of neighbors) {
+                if (nid === prevId) continue;
+                if (visitedEdges.has(edgeKey(currId, nid))) continue;
+                const nptRaw = pointById.get(nid);
+                if (!nptRaw) continue;
+                const npt = toXZ(nptRaw);
+                const candDir = { x: npt.x - currPt.x, z: npt.z - currPt.z };
+                const turn = signedTurnAngle(prevDir, candDir);
+                const score = turn >= 0 ? turn : turn + Math.PI * 2;
+                if (score > altScore) {
+                    altScore = score;
+                    alt = nid;
+                }
+            }
+            if (alt) bestNeighbor = alt;
+        }
+
+        currNextId = bestNeighbor;
+    }
+
+    // Need a loop with at least 3 unique vertices (plus returning to start)
+    const unique = new Set(orderedIds);
+    if (unique.size < 3) return null;
+
+    // Drop the repeated last startId if present (Shape.closePath will close)
+    if (orderedIds.length >= 2 && orderedIds[orderedIds.length - 1] === startId) {
+        orderedIds.pop();
+    }
+
+    const polyPts = orderedIds
+        .map((id) => pointById.get(id))
+        .filter((p): p is BlueprintPoint => !!p)
+        .map(toXZ);
+    if (polyPts.length < 3) return null;
 
     const shape = new THREE.Shape();
-    shape.moveTo(sorted[0].x, -sorted[0].z);
-    for (let i = 1; i < sorted.length; i++) {
-        shape.lineTo(sorted[i].x, -sorted[i].z);
+    shape.moveTo(polyPts[0].x, -polyPts[0].z);
+    for (let i = 1; i < polyPts.length; i++) {
+        shape.lineTo(polyPts[i].x, -polyPts[i].z);
     }
     shape.closePath();
     return shape;
@@ -275,7 +406,7 @@ function FloorMesh({
     floorKey: string;
 }) {
     const shape = useMemo(() => {
-        return buildFloorShapeFromOutline(points, walls);
+        return buildFloorShapeFromWalls(points, walls);
     }, [points, walls]);
     if (!shape) return null;
     return (
