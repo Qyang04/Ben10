@@ -147,21 +147,29 @@ export function TransformableElement({
             }
 
             // ── 2) Prevent overlap with other elements ──────────────
-            const selfRadius = 0.5 * Math.sqrt(dims.width ** 2 + dims.depth ** 2);
+            // Use AABB overlap with small clearance. Chair-table pairs can be
+            // very close (seating), other pairs need a tiny gap to prevent overlap.
+            const hw = dims.width / 2;
+            const hd = dims.depth / 2;
 
             for (const other of otherElements) {
                 if (!other.dimensions) continue;
-                const ox = other.position.x;
-                const oz = other.position.z;
-                const otherRadius =
-                    0.5 * Math.sqrt(other.dimensions.width ** 2 + other.dimensions.depth ** 2);
+                const ohw = other.dimensions.width / 2;
+                const ohd = other.dimensions.depth / 2;
 
-                const dx = x - ox;
-                const dz = z - oz;
-                const distSq = dx * dx + dz * dz;
-                const minDist = selfRadius + otherRadius;
+                // Check if this is a chair-table pair (they should sit close)
+                const isSeatingPair =
+                    (element.type === 'chair' && other.type === 'table') ||
+                    (element.type === 'table' && other.type === 'chair');
+                const clearance = isSeatingPair ? 0.01 : 0.02;
 
-                if (distSq < minDist * minDist) {
+                // AABB overlap test (axis-aligned, ignores rotation for speed)
+                const overlapX = (x - hw - clearance) < (other.position.x + ohw) &&
+                    (x + hw + clearance) > (other.position.x - ohw);
+                const overlapZ = (z - hd - clearance) < (other.position.z + ohd) &&
+                    (z + hd + clearance) > (other.position.z - ohd);
+
+                if (overlapX && overlapZ) {
                     return false;
                 }
             }
@@ -204,18 +212,21 @@ export function TransformableElement({
             }
 
             // ── 2) Prevent overlap with other elements ──────────────
-            const selfRadius = 0.5 * Math.sqrt(dims.width ** 2 + dims.depth ** 2);
+            const hw = dims.width / 2;
+            const hd = dims.depth / 2;
             for (const other of otherElements) {
                 if (!other.dimensions) continue;
-                const ox = other.position.x;
-                const oz = other.position.z;
-                const otherRadius =
-                    0.5 * Math.sqrt(other.dimensions.width ** 2 + other.dimensions.depth ** 2);
-                const dx = x - ox;
-                const dz = z - oz;
-                const distSq = dx * dx + dz * dz;
-                const minDist = selfRadius + otherRadius;
-                if (distSq < minDist * minDist) return false;
+                const ohw = other.dimensions.width / 2;
+                const ohd = other.dimensions.depth / 2;
+                const isSeatingPair =
+                    (element?.type === 'chair' && other.type === 'table') ||
+                    (element?.type === 'table' && other.type === 'chair');
+                const clearance = isSeatingPair ? 0.01 : 0.02;
+                const oX = (x - hw - clearance) < (other.position.x + ohw) &&
+                    (x + hw + clearance) > (other.position.x - ohw);
+                const oZ = (z - hd - clearance) < (other.position.z + ohd) &&
+                    (z + hd + clearance) > (other.position.z - ohd);
+                if (oX && oZ) return false;
             }
 
             return true;

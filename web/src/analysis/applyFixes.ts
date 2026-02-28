@@ -195,7 +195,18 @@ export function applyFixes(
         }));
 
         for (let iter = 0; iter < MAX_ITERATIONS - 1; iter++) {
-            const newGaps = findNarrowGaps(virtualElements, MIN_PATHWAY);
+            const allNewGaps = findNarrowGaps(virtualElements, MIN_PATHWAY);
+
+            // Filter out chair-table pairs — they SHOULD be close together
+            const newGaps = allNewGaps.filter((gap) => {
+                const a = virtualElements.find((e) => e.id === gap.elementA);
+                const b = virtualElements.find((e) => e.id === gap.elementB);
+                if (!a || !b) return true;
+                return !(
+                    (a.type === 'chair' && b.type === 'table') ||
+                    (a.type === 'table' && b.type === 'chair')
+                );
+            });
             if (newGaps.length === 0) break;
 
             result.iterations++;

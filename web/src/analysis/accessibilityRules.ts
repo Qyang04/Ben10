@@ -21,6 +21,7 @@ import {
     hasElementOfType,
     checkTurningRadius,
     blueprintDoorWidthMeters,
+    getBlueprintDoorCenter,
     computeAABB,
 } from './spatialUtils';
 
@@ -136,56 +137,73 @@ const doorWidthRule: AccessibilityRule = {
     },
 };
 
+/**
+ * Chair-table pairs are intentional seating arrangements — a wheelchair
+ * will not try to pass BETWEEN a chair and its table. So we skip those
+ * gaps from the pathway-width check.
+ */
+function isChairTablePair(a: Element, b: Element): boolean {
+    return (
+        (a.type === 'chair' && b.type === 'table') ||
+        (a.type === 'table' && b.type === 'chair')
+    );
+}
+
 const pathwayWidthRule: AccessibilityRule = {
     id: 'pathway-width',
     name: 'Pathway Width',
     category: 'pathways',
     check(fp) {
         const narrowGaps = findNarrowGaps(fp.elements, MIN_PATHWAY_WIDTH);
-        return narrowGaps.map((gap) => {
-            // Decide which element to move: pick the smaller one (by footprint area)
-            const elA = fp.elements.find((e) => e.id === gap.elementA);
-            const elB = fp.elements.find((e) => e.id === gap.elementB);
-            let suggestion: Suggestion | null = null;
+        return narrowGaps
+            .filter((gap) => {
+                // Skip chair-table pairs — they SHOULD be close together
+                const elA = fp.elements.find((e) => e.id === gap.elementA);
+                const elB = fp.elements.find((e) => e.id === gap.elementB);
+                if (elA && elB && isChairTablePair(elA, elB)) return false;
+                return true;
+            })
+            .map((gap) => {
+                const elA = fp.elements.find((e) => e.id === gap.elementA);
+                const elB = fp.elements.find((e) => e.id === gap.elementB);
+                let suggestion: Suggestion | null = null;
 
-            if (elA && elB) {
-                const areaA = elA.dimensions.width * elA.dimensions.depth;
-                const areaB = elB.dimensions.width * elB.dimensions.depth;
-                const moveTarget = areaA <= areaB ? elA : elB;
-                const shiftNeeded = parseFloat((MIN_PATHWAY_WIDTH - gap.gap + 0.05).toFixed(2));
+                if (elA && elB) {
+                    const areaA = elA.dimensions.width * elA.dimensions.depth;
+                    const areaB = elB.dimensions.width * elB.dimensions.depth;
+                    const moveTarget = areaA <= areaB ? elA : elB;
+                    const shiftNeeded = parseFloat((MIN_PATHWAY_WIDTH - gap.gap + 0.05).toFixed(2));
 
-                // Move along the gap axis
-                if (gap.axis === 'x') {
-                    // Move smaller element further in the x direction (away from the other)
-                    const otherEl = moveTarget === elA ? elB : elA;
-                    const direction = moveTarget.position.x > otherEl.position.x ? 1 : -1;
-                    suggestion = {
-                        action: 'move',
-                        targetElementId: moveTarget.id,
-                        newValue: { x: parseFloat((moveTarget.position.x + direction * shiftNeeded).toFixed(2)) },
-                        description: `Move ${moveTarget.type} ${shiftNeeded}m to create wheelchair clearance`,
-                    };
-                } else {
-                    const otherEl = moveTarget === elA ? elB : elA;
-                    const direction = moveTarget.position.z > otherEl.position.z ? 1 : -1;
-                    suggestion = {
-                        action: 'move',
-                        targetElementId: moveTarget.id,
-                        newValue: { z: parseFloat((moveTarget.position.z + direction * shiftNeeded).toFixed(2)) },
-                        description: `Move ${moveTarget.type} ${shiftNeeded}m to create wheelchair clearance`,
-                    };
+                    if (gap.axis === 'x') {
+                        const otherEl = moveTarget === elA ? elB : elA;
+                        const direction = moveTarget.position.x > otherEl.position.x ? 1 : -1;
+                        suggestion = {
+                            action: 'move',
+                            targetElementId: moveTarget.id,
+                            newValue: { x: parseFloat((moveTarget.position.x + direction * shiftNeeded).toFixed(2)) },
+                            description: `Move ${moveTarget.type} ${shiftNeeded}m to create wheelchair clearance`,
+                        };
+                    } else {
+                        const otherEl = moveTarget === elA ? elB : elA;
+                        const direction = moveTarget.position.z > otherEl.position.z ? 1 : -1;
+                        suggestion = {
+                            action: 'move',
+                            targetElementId: moveTarget.id,
+                            newValue: { z: parseFloat((moveTarget.position.z + direction * shiftNeeded).toFixed(2)) },
+                            description: `Move ${moveTarget.type} ${shiftNeeded}m to create wheelchair clearance`,
+                        };
+                    }
                 }
-            }
 
-            return makeIssue(
-                this.id, 'critical', this.category,
-                gap.elementA, [gap.elementA, gap.elementB],
-                'Pathway too narrow',
-                `Gap between elements is ${gap.gap.toFixed(2)}m — must be ≥${MIN_PATHWAY_WIDTH}m (36") for wheelchair passage.`,
-                'ADA 403.5.1',
-                suggestion,
-            );
-        });
+                return makeIssue(
+                    this.id, 'critical', this.category,
+                    gap.elementA, [gap.elementA, gap.elementB],
+                    'Pathway too narrow',
+                    `Gap between elements is ${gap.gap.toFixed(2)}m — must be ≥${MIN_PATHWAY_WIDTH}m (36") for wheelchair passage.`,
+                    'ADA 403.5.1',
+                    suggestion,
+                );
+            });
     },
 };
 
@@ -468,55 +486,80 @@ const doorClearanceRule: AccessibilityRule = {
     category: 'doorways',
     check(fp) {
         const issues: Issue[] = [];
-        // Check palette-placed doors — need 0.46m (18") clear on latch side
+        // ADA 404.2.4 — need 0.46m (18") clear on latch side of doors
         const MIN_SIDE_CLEARANCE = 0.46;
-        for (const el of getElementsByType(fp, 'door')) {
-            const clearanceRadius = el.dimensions.width / 2 + MIN_SIDE_CLEARANCE;
+
+        // Helper: check clearance around a door center point
+        const checkDoorArea = (
+            doorId: string,
+            cx: number, cz: number,
+            doorWidthM: number,
+            label: string,
+        ) => {
+            const clearanceRadius = doorWidthM / 2 + MIN_SIDE_CLEARANCE;
             const intruders = checkTurningRadius(
-                el.position.x, el.position.z,
-                clearanceRadius,
-                fp.elements,
-                el.id,
+                cx, cz, clearanceRadius, fp.elements, doorId,
             );
-            // Filter out walls (walls next to doors are normal)
             const obstacles = intruders.filter((id) => {
                 const obstacle = fp.elements.find((e: Element) => e.id === id);
                 return obstacle && obstacle.type !== 'wall';
             });
             if (obstacles.length > 0) {
-                // Move the first obstructing element away from the door
                 const firstObstacle = fp.elements.find((e) => e.id === obstacles[0]);
                 let suggestion: Suggestion | null = null;
                 if (firstObstacle) {
-                    const dx = firstObstacle.position.x - el.position.x;
-                    const dz = firstObstacle.position.z - el.position.z;
+                    const dx = firstObstacle.position.x - cx;
+                    const dz = firstObstacle.position.z - cz;
                     const dist = Math.sqrt(dx * dx + dz * dz) || 0.01;
                     const obstacleBox = computeAABB(firstObstacle);
-                    const obstacleHalf = Math.max(
-                        (obstacleBox.maxX - obstacleBox.minX) / 2,
-                        (obstacleBox.maxZ - obstacleBox.minZ) / 2,
-                    );
-                    const pushDist = clearanceRadius + obstacleHalf + 0.05;
+                    const ohw = (obstacleBox.maxX - obstacleBox.minX) / 2;
+                    const ohd = (obstacleBox.maxZ - obstacleBox.minZ) / 2;
+                    // Use diagonal extent — corner can protrude further than edge
+                    const obstacleDiag = Math.sqrt(ohw * ohw + ohd * ohd);
+                    const pushDist = clearanceRadius + obstacleDiag + 0.15;
                     suggestion = {
                         action: 'move',
                         targetElementId: firstObstacle.id,
                         newValue: {
-                            x: parseFloat((el.position.x + (dx / dist) * pushDist).toFixed(2)),
-                            z: parseFloat((el.position.z + (dz / dist) * pushDist).toFixed(2)),
+                            x: parseFloat((cx + (dx / dist) * pushDist).toFixed(2)),
+                            z: parseFloat((cz + (dz / dist) * pushDist).toFixed(2)),
                         },
-                        description: `Move ${firstObstacle.type} ${MIN_SIDE_CLEARANCE}m away from door`,
+                        description: `Move ${firstObstacle.type} ${MIN_SIDE_CLEARANCE}m away from ${label}`,
                     };
                 }
                 issues.push(makeIssue(
                     this.id, 'warning', this.category,
-                    el.id, [el.id, ...obstacles],
-                    'Door clearance obstructed',
-                    `Elements within ${MIN_SIDE_CLEARANCE}m (18") of door — wheelchair users need clear maneuvering space.`,
+                    doorId, [doorId, ...obstacles],
+                    `${label} clearance obstructed`,
+                    `Elements within ${MIN_SIDE_CLEARANCE}m (18") of ${label.toLowerCase()} — wheelchair users need clear maneuvering space.`,
                     'ADA 404.2.4',
                     suggestion,
                 ));
             }
+        };
+
+        // 1. Check palette-placed doors
+        for (const el of getElementsByType(fp, 'door')) {
+            checkDoorArea(el.id, el.position.x, el.position.z, el.dimensions.width, 'Door');
         }
+
+        // 2. Check blueprint doors (drawn on walls)
+        for (const bpDoor of fp.doors) {
+            const center = getBlueprintDoorCenter(bpDoor, fp.points, fp.walls);
+            if (center) {
+                const widthM = blueprintDoorWidthMeters(bpDoor);
+                checkDoorArea(bpDoor.id, center.x, center.z, widthM, 'Blueprint door');
+            }
+        }
+
+        // 3. Check elevator doors — elevator entrance must be clear
+        for (const el of getElementsByType(fp, 'elevator')) {
+            // Elevator door is on the front face (z - depth/2), width = elevator width
+            const elevDoorCx = el.position.x;
+            const elevDoorCz = el.position.z - el.dimensions.depth / 2;
+            checkDoorArea(el.id, elevDoorCx, elevDoorCz, el.dimensions.width, 'Elevator door');
+        }
+
         return issues;
     },
 };
@@ -536,3 +579,4 @@ export const ALL_RULES: AccessibilityRule[] = [
     noExitRule,
     tableClearanceRule,
 ];
+

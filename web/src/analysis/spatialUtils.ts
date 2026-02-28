@@ -188,7 +188,13 @@ export function blueprintDoorWidthMeters(door: BlueprintDoor): number {
 }
 
 /**
- * Get the center position of a blueprint door in meters (world coords).
+ * Get the center position of a blueprint door in CENTERED world coords.
+ *
+ * CRITICAL: The 3D renderer centers the blueprint by computing:
+ *   centerX = (minPx + maxPx) / (2 * PPM)
+ *   worldX  = px / PPM - centerX
+ * We must apply the same centering offset here so door coords match
+ * the element positions in the scene.
  */
 export function getBlueprintDoorCenter(
     door: BlueprintDoor,
@@ -204,10 +210,19 @@ export function getBlueprintDoorCenter(
     const wallLen = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
     if (wallLen === 0) return null;
 
+    // Compute centering offset (same as BlueprintWalls3D)
+    const allPxX = points.map((p) => p.x);
+    const allPxY = points.map((p) => p.y);
+    const centerX = (Math.min(...allPxX) + Math.max(...allPxX)) / (2 * PIXELS_PER_METER);
+    const centerZ = (Math.min(...allPxY) + Math.max(...allPxY)) / (2 * PIXELS_PER_METER);
+
     const t = (door.offset + door.width / 2) / wallLen;
+    const rawX = (start.x + t * (end.x - start.x)) / PIXELS_PER_METER;
+    const rawZ = (start.y + t * (end.y - start.y)) / PIXELS_PER_METER;
+
     return {
-        x: (start.x + t * (end.x - start.x)) / PIXELS_PER_METER,
-        z: (start.y + t * (end.y - start.y)) / PIXELS_PER_METER,
+        x: rawX - centerX,
+        z: rawZ - centerZ,
     };
 }
 
