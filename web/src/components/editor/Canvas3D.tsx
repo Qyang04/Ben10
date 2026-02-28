@@ -32,6 +32,8 @@ import { FloorElements } from './FloorElements';
 import { AutoFitCamera } from './AutoFitCamera';
 import { SceneExporter, ExportButtonUI } from './ExportButton';
 import BlueprintWalls3D from '../elements/BlueprintWalls3D';
+import { WheelchairPath } from './WheelchairPath';
+import { findWheelchairPath, type PathPoint, type PathfindingResult } from '../../analysis/wheelchairPathfinding';
 import {
     computeRoomPolygonWorld,
     isPointInRoomPolygon,
@@ -57,11 +59,13 @@ function Scene({
     shortWalls,
     mode,
     resetToken,
+    pathfindingMode,
 }: {
     onExportReady: (fn: (filename: string) => Promise<void>) => void;
     shortWalls: boolean;
     mode: 'orbit' | 'fps';
     resetToken: number;
+    pathfindingMode: boolean;
 }) {
     const { camera, gl } = useThree();
     const floorPlan = useFloorPlanStore((state) => state.floorPlan);
@@ -71,6 +75,11 @@ function Scene({
     const [walkStarted, setWalkStarted] = useState(false);
     const [walkPointer, setWalkPointer] = useState<[number, number] | null>(null);
     const [walkPointerValid, setWalkPointerValid] = useState(true);
+
+    // Pathfinding state
+    const [pfStart, setPfStart] = useState<PathPoint | null>(null);
+    const [pfEnd, setPfEnd] = useState<PathPoint | null>(null);
+    const [pfResult, setPfResult] = useState<PathfindingResult | null>(null);
 
     // Room boundary and elements for walk-mode collision checks
     const roomPolygon: RoomPolygon | null = useMemo(() => {
@@ -186,24 +195,43 @@ function Scene({
     const handleGroundClick = useCallback(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (event: any) => {
+            // ── Pathfinding mode: click to set start/end ──
+            if (pathfindingMode && event?.point && event.button === 0) {
+                const { x, z } = event.point;
+                if (!pfStart) {
+                    setPfStart({ x, z });
+                    setPfEnd(null);
+                    setPfResult(null);
+                } else if (!pfEnd) {
+                    const endPt: PathPoint = { x, z };
+                    setPfEnd(endPt);
+                    // Compute path immediately
+                    const result = findWheelchairPath(
+                        pfStart, endPt, roomPolygon, wallCollisionSegments, walkElements,
+                    );
+                    setPfResult(result);
+                } else {
+                    // Reset: click again starts a new pair
+                    setPfStart({ x, z });
+                    setPfEnd(null);
+                    setPfResult(null);
+                }
+                return;
+            }
+
             selectElement(null);
 
             // In walk mode, first click on floor confirms starting position.
-            // Only left-clicks (button === 0) are allowed to choose a start point;
-            // right-clicks remain available for dragging/orbiting.
             if (mode === 'fps' && !walkStarted && event?.point && event.button === 0) {
                 const { x, z } = event.point;
-                // Reject start positions that are too close to elements or outside the room.
-                if (!canStandAt(x, z)) {
-                    return;
-                }
+                if (!canStandAt(x, z)) return;
                 setWalkStart([x, z]);
                 setWalkStarted(true);
                 setWalkPointer(null);
                 setWalkPointerValid(true);
             }
         },
-        [selectElement, mode, walkStarted, canStandAt],
+        [selectElement, mode, walkStarted, canStandAt, pathfindingMode, pfStart, pfEnd, roomPolygon, wallCollisionSegments, walkElements],
     );
 
     /**
@@ -429,6 +457,16 @@ function Scene({
             {/* Palette-placed furniture elements */}
             <FloorElements onOrbitToggle={handleOrbitToggle} />
 
+            {/* Wheelchair pathfinding visualization */}
+            {pathfindingMode && (
+                <WheelchairPath
+                    start={pfStart}
+                    end={pfEnd}
+                    path={pfResult?.path ?? null}
+                    found={pfResult?.found ?? false}
+                />
+            )}
+
             {/* Camera controls */}
             {mode === 'orbit' || !walkStarted || !walkStart ? (
                 <OrbitControls
@@ -468,6 +506,7 @@ export default function Canvas3D() {
     const [shortWalls, setShortWalls] = useState(false);
     const [viewMode3D, setViewMode3D] = useState<'orbit' | 'fps'>('orbit');
     const [cameraResetToken, setCameraResetToken] = useState(0);
+    const [pathfindingMode, setPathfindingMode] = useState(false);
 
     const handleExportReady = useCallback((fn: (filename: string) => Promise<void>) => {
         exportFnRef.current = fn;
@@ -507,6 +546,7 @@ export default function Canvas3D() {
                     shortWalls={shortWalls}
                     mode={viewMode3D}
                     resetToken={cameraResetToken}
+                    pathfindingMode={pathfindingMode}
                 />
             </Canvas>
 
@@ -573,6 +613,49 @@ export default function Canvas3D() {
             >
                 {viewMode3D === 'fps' ? 'Exit walk mode' : 'Enter walk mode'}
             </button>
+
+            {/* Pathfinding toggle */}
+            <button
+                type="button"
+                onClick={() => setPathfindingMode((prev) => !prev)}
+                style={{
+                    position: 'absolute',
+                    top: 16,
+                    left: 290,
+                    zIndex: 20,
+                    background: pathfindingMode ? '#8b5cf6' : '#334155',
+                    color: 'white',
+                    border: '1px solid #475569',
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    fontWeight: 500,
+                }}
+            >
+                {pathfindingMode ? '♿ Pathfinding ON' : '♿ Pathfinding'}
+            </button>
+
+            {/* Pathfinding instructions */}
+            {pathfindingMode && (
+                <div
+                    style={{
+                        position: 'absolute',
+                        top: 52,
+                        left: 290,
+                        zIndex: 20,
+                        padding: '6px 10px',
+                        borderRadius: 8,
+                        background: 'rgba(139,92,246,0.9)',
+                        border: '1px solid #a78bfa',
+                        color: 'white',
+                        fontSize: 11,
+                        maxWidth: 220,
+                    }}
+                >
+                    Click floor to set start → then end point
+                </div>
+            )}
 
             {/* Element manipulation help */}
             <div
