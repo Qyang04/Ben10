@@ -6,7 +6,7 @@
  * - Wraps an element to make it draggable in 3D space
  * - Uses raycaster + ground plane intersection (inspired by wedding repo)
  * - No gizmo arrows — directly click and drag on the ground plane
- * - Grid snaps in real-time while dragging
+ * - Smooth continuous movement while dragging (no grid snapping)
  * - Left/right click + Q or E rotates element (yaw, 5° per press)
  * - Left/right click + W or S adjusts element height
  * - Left/right click + scroll wheel adjusts element width
@@ -15,7 +15,7 @@
  * HOW IT WORKS:
  * 1. Click element to select (shows selection ring)
  * 2. Pointer down → captures pointer, creates ground plane, calculates offset
- * 3. Pointer move → intersects ray with ground plane, applies offset, snaps to grid
+ * 3. Pointer move → intersects ray with ground plane, applies offset (smooth movement)
  * 4. Pointer up → releases capture, commits position to store, re-enables orbit
  */
 
@@ -23,7 +23,6 @@ import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useFloorPlanStore } from '../../store';
-import { snapToGrid } from '../../utils/gridSnap';
 import { DimensionHandles } from './DimensionHandles';
 import { computeRoomPolygonWorld, isPointInRoomPolygon, type RoomPolygon } from '../../utils/roomGeometry';
 import type { Element as FloorElement } from '../../types';
@@ -48,7 +47,6 @@ interface DragState {
     captureTarget: EventTarget | null;
 }
 
-const SNAP_INCREMENT = 0.5; // 0.5m grid
 const SELECTION_RING_COLOR = '#3b82f6'; // Blue ring
 const HOVER_EMISSIVE = 0x1a3a5c; // Subtle blue glow
 const ROTATE_KEY_STEP = (5 * Math.PI) / 180; // 5° per key press
@@ -370,9 +368,9 @@ export function TransformableElement({
             event.stopPropagation();
 
             if (event.ray.intersectPlane(state.plane, state.intersection)) {
-                // New position = intersection + offset, snapped to grid
-                const nextX = snapToGrid(state.intersection.x + state.offset.x, SNAP_INCREMENT);
-                const nextZ = snapToGrid(state.intersection.z + state.offset.z, SNAP_INCREMENT);
+                // New position = intersection + offset (smooth, no grid snapping)
+                const nextX = state.intersection.x + state.offset.x;
+                const nextZ = state.intersection.z + state.offset.z;
 
                 // Keep Y at current level (ground)
                 const nextY = groupRef.current.position.y;

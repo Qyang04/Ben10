@@ -282,18 +282,18 @@ function Scene({
             if (keysRef.current['KeyD']) {
                 nextPosition.addScaledVector(right, moveDistance);
             }
+            const rotateSpeed = 1.5;
+            const yAxis = new THREE.Vector3(0, 1, 0);
+            if (keysRef.current['ArrowLeft']) {
+                camera.rotateOnWorldAxis(yAxis, rotateSpeed * delta);
+            }
+            if (keysRef.current['ArrowRight']) {
+                camera.rotateOnWorldAxis(yAxis, -rotateSpeed * delta);
+            }
 
             // Apply horizontal collision constraints
             if (canMoveTo(nextPosition.x, nextPosition.z)) {
                 camera.position.copy(nextPosition);
-            }
-
-            const rotateSpeed = 1.5; // radians per second
-            if (keysRef.current['ArrowLeft']) {
-                camera.rotation.y += rotateSpeed * delta;
-            }
-            if (keysRef.current['ArrowRight']) {
-                camera.rotation.y -= rotateSpeed * delta;
             }
         });
 
