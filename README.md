@@ -56,11 +56,11 @@ npm run dev
 
 The dev server will start (e.g. `http://localhost:5173`). Open that URL in your browser to use the editor.
 
-**3. (Optional) Environment variables**
+**3. Environment variables**
 
 For save/load and AI features, copy `web/.env.example` to `web/.env.local` and fill in your Firebase and Gemini API keys. The app runs without them, but persistence and AI checks require this setup.
 
-**4. (Optional) Firebase setup**
+**4. Firebase setup**
 ```bash
 npm install -g firebase-tools
 firebase login
