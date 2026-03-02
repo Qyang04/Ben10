@@ -29,19 +29,38 @@ Ben10/
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js 18+
-- npm or yarn
-- Flutter SDK (for mobile)
-- Firebase CLI
 
-### Web App Setup
+Before running the system, ensure you have:
+
+| Requirement | Purpose |
+|-------------|---------|
+| **Node.js 18+** | Run the web app and tooling |
+| **npm** or **yarn** | Install dependencies |
+| **Flutter SDK** | Build/run the mobile companion app (optional) |
+| **Firebase CLI** | Deploy backend and use Firebase features (optional) |
+
+### How to Run the System
+
+**1. Clone and open the project**
+```bash
+git clone <repository-url>
+cd Ben10
+```
+
+**2. Install dependencies and start the web app**
 ```bash
 cd web
 npm install
 npm run dev
 ```
 
-### Firebase Setup
+The dev server will start (e.g. `http://localhost:5173`). Open that URL in your browser to use the editor.
+
+**3. (Optional) Environment variables**
+
+For save/load and AI features, copy `web/.env.example` to `web/.env.local` and fill in your Firebase and Gemini API keys. The app runs without them, but persistence and AI checks require this setup.
+
+**4. (Optional) Firebase setup**
 ```bash
 npm install -g firebase-tools
 firebase login
